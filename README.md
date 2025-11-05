@@ -25,7 +25,7 @@ A voice-first maternal health assistant application in Kannada language, designe
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/[your-username]/mcp.git
+git clone https://github.com/[your-username]/maternal-care-project.git
 ```
 
 2. Install dependencies:
