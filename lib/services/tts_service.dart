@@ -6,7 +6,6 @@ import 'package:flutter_tts/flutter_tts.dart';
 class TtsService {
   final FlutterTts _tts = FlutterTts();
   bool _initialized = false;
-  bool _disposed = false; // guard to prevent use-after-dispose
 
   TtsService() {
     // Kick off async configure but don't block constructor callers.
@@ -14,79 +13,161 @@ class TtsService {
     _configureDefaults();
   }
 
-  bool get isInitialized => _initialized && !_disposed;
-
   Future<void> _configureDefaults() async {
+    if (_initialized) return;
     try {
-      await _tts.setLanguage('kn-IN');
-      await _tts.setSpeechRate(0.5); // Slower default rate for clarity
+      // Attempt to set a sensible default language, but verify it's supported.
+      await setLanguage('kn-IN');
+      // SLOWER speeds for better clarity (set to a natural speaking rate)
+      await _tts.setPitch(1.0);    // Normal pitch
+      await _tts.setSpeechRate(0.55); // Natural default rate
       await _tts.setVolume(1.0);
-      await _tts.setPitch(1.0);
+      await _tts.awaitSpeakCompletion(true);
       _initialized = true;
+      debugPrint('TTS configured: language set and defaults applied');
     } catch (e) {
-      debugPrint('TTS initialization error: $e');
-      return Future.value(); // Explicit void return
+      // Don't crash the app if configuration fails; log for debugging.
+      debugPrint('TTS configuration error: $e');
     }
   }
 
-  Future<void> setLanguage(String language) async {
-    if (_disposed) return Future.value();
-    return _tts.setLanguage(language);
+  /// Speak [text]. Returns when the speak command has been issued (and, with awaitSpeakCompletion(true), completes after speech ends).
+  Future<void> speak(String text) async {
+    if (text.isEmpty) return;
+    if (!_initialized) await _configureDefaults();
+
+    try {
+      // Stop any currently playing speech to avoid overlapping (common cause of glitches).
+      await _tts.stop();
+      await _tts.speak(text);
+    } catch (e) {
+      debugPrint('TTS speak error: $e');
+    }
   }
 
+  /// Stop any ongoing speech.
+  Future<void> stop() => _tts.stop();
+
+  /// Release native resources. Call when the app is disposed.
+  Future<void> dispose() async {
+    try {
+      await _tts.stop();
+    } catch (_) {}
+  }
+
+  /// Optional runtime tuning helpers if you'd like to expose controls to the UI/tests.
   Future<void> setSpeechRate(double rate) async {
-    if (_disposed) return Future.value();
-    return _tts.setSpeechRate(rate);
-  }
-
-  Future<void> setSlowSpeed() async {
-    if (_disposed) return Future.value();
-    return _tts.setSpeechRate(0.4); // Very slow and clear for Kannada
+    // clamp rate to sensible range 0.0 - 1.0
+    final r = rate.clamp(0.0, 1.0);
+    await _tts.setSpeechRate(r);
   }
 
   Future<void> setPitch(double pitch) async {
-    if (_disposed) return Future.value();
-    return _tts.setPitch(pitch);
+    // clamp pitch to 0.5 - 2.0 (platform-dependent)
+    final p = pitch.clamp(0.5, 2.0);
+    await _tts.setPitch(p);
   }
 
-  Future<void> setStartHandler(VoidCallback handler) async {
-    if (_disposed) return Future.value();
-    _tts.setStartHandler(handler);
-    return Future.value();
-  }
-
-  Future<void> setCompletionHandler(VoidCallback handler) async {
-    if (_disposed) return Future.value();
-    _tts.setCompletionHandler(handler);
-    return Future.value();
-  }
-
-  Future<void> setErrorHandler(void Function(dynamic) handler) async {
-    if (_disposed) return Future.value();
-    _tts.setErrorHandler(handler);
-    return Future.value();
-  }
-
-  Future<void> speak(String text) async {
-    if (_disposed || text.isEmpty) return Future.value();
-
-    if (!_initialized) {
-      debugPrint('Warning: TTS used before initialization complete');
-      await _configureDefaults();
+  /// Set the TTS language. If the requested language isn't available on the
+  /// device's TTS engine, try simple alternatives and finally fall back to a
+  /// supported language or 'en-US'. This prevents silent failures when a
+  /// regional language isn't installed on the device.
+  Future<void> setLanguage(String language) async {
+    try {
+      final available = await _tts.getLanguages; // returns List<dynamic> or null
+      final requested = language;
+      if (available != null) {
+        final asStrings = available.map((e) => e.toString()).toList();
+        if (asStrings.contains(requested)) {
+          await _tts.setLanguage(requested);
+          return;
+        }
+        // try alternate separator
+        final alt = requested.replaceAll('-', '_');
+        if (asStrings.contains(alt)) {
+          await _tts.setLanguage(alt);
+          return;
+        }
+        // try match by language prefix (e.g., 'kn' matches 'kn-IN')
+        final prefix = requested.split(RegExp(r'[-_]')).first;
+        final firstMatch = asStrings.firstWhere((s) => s.startsWith(prefix), orElse: () => '');
+        if (firstMatch.isNotEmpty) {
+          await _tts.setLanguage(firstMatch);
+          return;
+        }
+        // fallback to first supported language
+        if (asStrings.isNotEmpty) {
+          await _tts.setLanguage(asStrings.first);
+          debugPrint('TTS language "$requested" not available; falling back to ${asStrings.first}');
+          return;
+        }
+      }
+      // As a final fallback try en-US
+      await _tts.setLanguage('en-US');
+      debugPrint('TTS language "$language" not found; set to en-US fallback');
+    } catch (e) {
+      debugPrint('Error setting TTS language ($language): $e');
+      try {
+        await _tts.setLanguage('en-US');
+      } catch (e2) {
+        debugPrint('Fallback setLanguage failed: $e2');
+      }
     }
-
-    return _tts.speak(text);
   }
 
-  Future<void> stop() async {
-    if (_disposed) return Future.value();
-    return _tts.stop();
+  void setStartHandler(VoidCallback? handler) {
+    if (handler != null) {
+      _tts.setStartHandler(handler);
+    } else {
+      // FlutterTts requires a non-null callback; register a no-op when clearing.
+      _tts.setStartHandler(() {});
+    }
   }
 
-  void dispose() {
-    _disposed = true;
-    _tts.stop();
+  void setCompletionHandler(VoidCallback? handler) {
+    if (handler != null) {
+      _tts.setCompletionHandler(handler);
+    } else {
+      _tts.setCompletionHandler(() {});
+    }
+  }
+  void setErrorHandler(void Function(dynamic)? handler) {
+    if (handler != null) {
+      _tts.setErrorHandler((dynamic err) => handler(err));
+    } else {
+      _tts.setErrorHandler((dynamic _) {});
+    }
+  }
+
+  Future<void> setVolume(double volume) => _tts.setVolume(volume);
+
+  /// Set very slow speed for important information
+  Future<void> setSlowSpeed() async {
+    try {
+      await _tts.setSpeechRate(0.45); // slightly slow but natural
+    } catch (e) {
+      debugPrint('Error setting slow speed: $e');
+    }
+  }
+
+  /// Normal conversation speed
+  Future<void> setNormalSpeed() async {
+    try {
+      await _tts.setSpeechRate(0.55);
+    } catch (e) {
+      debugPrint('Error setting normal speed: $e');
+    }
+  }
+
+  /// Faster speed for quick responses
+  Future<void> setFastSpeed() async {
+    try {
+      await _tts.setSpeechRate(0.7);
+    } catch (e) {
+      debugPrint('Error setting fast speed: $e');
+    }
   }
 }
 
+// Convenient singleton
 final ttsService = TtsService();

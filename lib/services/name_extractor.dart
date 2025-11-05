@@ -1,5 +1,3 @@
-// lib/services/name_extractor.dart
-
 import 'package:flutter/foundation.dart';
 
 class NameExtractor {
@@ -10,86 +8,90 @@ class NameExtractor {
     final lowerText = text.toLowerCase();
     debugPrint('Name extraction - Original text: $text');
 
-    // First try common patterns in Kannada and English
-    final patterns = [
-      RegExp(r'(?:ನನ್ನ ಹೆಸರು|my name is|i am|ನಾನು) ([^\n.,!?]+)', caseSensitive: false),
-      RegExp(r'([^\n.,!?]+) (?:ಎಂದು ಕರೆಯುತ್ತಾರೆ|ಎಂಬುದು ನನ್ನ ಹೆಸರು)', caseSensitive: false),
-      RegExp(r'call me ([^\n.,!?]+)', caseSensitive: false),
+    // Common Kannada name patterns
+    final kannadaNamePatterns = [
+      'ನನ್ನ ಹೆಸರು',
+      'ನಾನು',
+      'ಹೆಸರು',
+      'ನನ್ನ ಪೆಸರು',
+      'ನಾನ್',
     ];
 
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(lowerText);
-      if (match != null) {
-        final extracted = match.group(1)?.trim();
-        if (extracted != null && extracted.isNotEmpty) {
-          // Get the original case from the matched position
-          final start = match.start;
-          final end = match.end;
-          final originalCase = text.substring(start, end).trim();
-          debugPrint('Name extracted via pattern: $originalCase');
-          return originalCase;
-        }
-      }
-    }
+    // Common English name patterns
+    final englishNamePatterns = [
+      'my name is',
+      'my name',
+      'name is',
+      'i am',
+      'call me',
+    ];
 
-    // If no patterns match, try splitting and cleaning
-    final words = text.split(RegExp(r'[\s,!?]+'));
-    String? name;
+    String cleanedText = text;
 
-    // Look for words that could be names (avoid common words/noise)
-    for (final word in words) {
-      if (word.length > 1 && !_isCommonWord(word)) {
-        name = word;
+    // Check for Kannada patterns first
+    for (final pattern in kannadaNamePatterns) {
+      if (lowerText.contains(pattern)) {
+        final patternIndex = lowerText.indexOf(pattern);
+        cleanedText = text.substring(patternIndex + pattern.length).trim();
+        debugPrint('Name extraction - After Kannada pattern: $cleanedText');
         break;
       }
     }
 
-    debugPrint('Name extracted via fallback: $name');
-    return name ?? '';
+    // Check for English patterns
+    for (final pattern in englishNamePatterns) {
+      if (lowerText.contains(pattern)) {
+        final patternIndex = lowerText.indexOf(pattern);
+        cleanedText = text.substring(patternIndex + pattern.length).trim();
+        debugPrint('Name extraction - After English pattern: $cleanedText');
+        break;
+      }
+    }
+
+    // Remove common suffixes (both languages)
+    final suffixes = ['ಅವರು', 'ಆಗಿದೆ', 'ಎಂದು', 'ಎನ್ನುತ್ತಾರೆ', 'ಎನ್ನುವರು', 'is', 'am', 'are'];
+    for (final suffix in suffixes) {
+      if (cleanedText.toLowerCase().endsWith(suffix.toLowerCase())) {
+        cleanedText = cleanedText.substring(0, cleanedText.length - suffix.length).trim();
+      }
+    }
+
+    debugPrint('Name extraction - Final extracted: $cleanedText');
+    return cleanedText.isNotEmpty ? cleanedText : text;
   }
 
   /// Enhanced name extraction with context awareness
   String extractNameFromContext(String text, String context) {
     String name = extractName(text);
 
-    if (name.isEmpty && context == 'username') {
-      // For username context, be more lenient
-      final words = text.split(RegExp(r'[\s,!?]+'));
-      for (final word in words) {
-        if (word.length > 1) {
-          name = word;
-          break;
+    // Additional context-based cleaning
+    if (context == 'username') {
+      // For username context, remove common verbs and adjectives
+      final commonVerbs = ['ಹೇಳು', 'ಕೇಳು', 'ತಿಳಿಸು', 'ಕೊಡು', 'please', 'kindly'];
+      for (final verb in commonVerbs) {
+        if (name.toLowerCase().endsWith(verb.toLowerCase())) {
+          name = name.substring(0, name.length - verb.length).trim();
         }
       }
+
+      // Normalize common Unicode quotation marks to simple quotes
+      const smartQuotes = ['\u201C', '\u201D', '\u2018', '\u2019', '\u201E', '\u201F'];
+      for (final q in smartQuotes) {
+        name = name.replaceAll(RegExp(q), '');
+      }
+
+      // Remove any remaining ASCII quotes
+      name = name.replaceAll('"', '');
+      name = name.replaceAll('\'', '');
+
+      // Remove punctuation but preserve word characters, whitespace and Kannada range
+      name = name.replaceAll(RegExp(r"[^\w\s\u0C80-\u0CFF]"), ' ').trim();
+
+      // Collapse multiple spaces to one
+      name = name.replaceAll(RegExp(r'\s+'), ' ').trim();
     }
 
     return name;
-  }
-
-  bool _isCommonWord(String word) {
-    final lowerWord = word.toLowerCase();
-    return [
-      // Kannada common words
-      'ನನ್ನ',
-      'ಹೆಸರು',
-      'ಎಂದು',
-      'ನಾನು',
-      'ಮತ್ತು',
-      'ಆದರೆ',
-      'ಆಗಿದೆ',
-      'ಇದೆ',
-      // English common words
-      'my',
-      'name',
-      'is',
-      'please',
-      'call',
-      'me',
-      'the',
-      'and',
-      'but',
-      'or',
-    ].contains(lowerWord);
   }
 }
 

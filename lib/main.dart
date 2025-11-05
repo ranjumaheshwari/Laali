@@ -1,4 +1,3 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 
 // Core app pages — adjust paths if you placed files in subfolders.
@@ -36,9 +35,6 @@ class MyApp extends StatelessWidget {
         '/signup': (context) => const VoiceSignupPage(),
         '/voice': (context) => const VoiceInterfacePage(),
         '/dashboard': (context) => const DashboardPage(),
-        // Redirect /login to the signup page
-        '/login': (context) => const VoiceSignupPage(),
-
       },
       // Fallback for unknown routes -> NotFoundPage receives the attempted RouteSettings
       onUnknownRoute: (settings) => MaterialPageRoute(

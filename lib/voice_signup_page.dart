@@ -32,7 +32,9 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     _initTts();
     // Auto-start voice flow after UI is ready
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startAutoVoiceSignup();
+      Future.delayed(const Duration(milliseconds: 900), () {
+        _startAutoVoiceSignup();
+      });
     });
   }
 
@@ -52,11 +54,14 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       if (mounted) setState(() => isSpeaking = false);
     });
 
-    // Start the signup flow after TTS is initialized
-    if (!hasSpokenIntro) {
-      await _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
-      if (mounted) setState(() => hasSpokenIntro = true);
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!hasSpokenIntro) {
+        Future.delayed(const Duration(milliseconds: 800), () {
+          _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
+          if (mounted) setState(() => hasSpokenIntro = true);
+        });
+      }
+    });
   }
 
   Future<void> _speak(String text) async {
@@ -70,6 +75,15 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
 
   Future<void> _toggleListening() async {
     // For signup we prefer to auto-start listening flow
+    await _startListeningForName();
+  }
+
+  Future<void> _startAutoVoiceSignup() async {
+    if (!hasSpokenIntro) {
+      await _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
+      if (mounted) setState(() => hasSpokenIntro = true);
+    }
+    // Start listening for name input
     await _startListeningForName();
   }
 
@@ -89,25 +103,50 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       });
     }
 
-    await speechService.startListeningWithMixedLanguage(
-      (text, isFinal) {
-        if (mounted) {
-          setState(() => transcript = text);
-          if (isFinal) {
-            _handleRecognitionResult(text);
+    try {
+      await speechService.startListeningWithRetry((text, isFinal) {
+        if (!mounted) return;
+        setState(() => transcript = text);
+        if (isFinal && text.isNotEmpty) {
+          // Handle recognized result (existing flow)
+          _handleRecognitionResult(text);
+          // If still not at confirm step, keep listening for name again
+          if (step == SignupStep.username) {
+            Future.delayed(const Duration(milliseconds: 800), () async {
+              if (mounted) await _startListeningForName();
+            });
+          } else {
+            // stop listening if moved to confirm
+            setState(() => isListening = false);
           }
+        } else if (isFinal) {
+          // no words detected
+          setState(() => isListening = false);
         }
-      },
-    );
+      }, localeId: 'kn-IN', retries: 2, attemptTimeout: const Duration(seconds: 10), onFailure: () async {
+        if (!mounted) return;
+        setState(() => isListening = false);
+        await _speak('ಕ್ಷಮಿಸಿ, ನಾನು ನಿಮ್ಮನ್ನು ಕೇಳಲಾರದಿದ್ದು. ದಯವಿಟ್ಟು ಮೈಕ್ರೊಫೋನ್ ಅನುಮತಿಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.');
+      });
+    } catch (e) {
+      debugPrint('startListeningForName error: $e');
+      if (mounted) setState(() => isListening = false);
+    }
   }
 
-  Future<void> _startAutoVoiceSignup() async {
-    if (!hasSpokenIntro) {
-      await _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
-      if (mounted) setState(() => hasSpokenIntro = true);
-    }
-    // Start listening for name input
-    await _startListeningForName();
+  /// Speak a prompt and listen for a single final reply, then call onFinal.
+  Future<void> _speakThenListen(String prompt, Future<void> Function(String) onFinal) async {
+    await _speak(prompt);
+    // Start listening and wait for a final result
+    await speechService.startListeningWithRetry((text, isFinal) async {
+      if (isFinal) {
+        await onFinal(text);
+      } else {
+        if (mounted) setState(() => transcript = text);
+      }
+    }, localeId: 'kn-IN', retries: 2, attemptTimeout: const Duration(seconds: 10), onFailure: () async {
+      await _speak('ಕ್ಷಮಿಸಿ, ನನಗೇ ನಿಮ್ಮ ಧ್ವನಿ ಕೇಳಿಸುತಿಲ್ಲ. ದಯವಿಟ್ಟು ಮೈಕ್ರೊಫೋನ್ ಪರಿಶೀಲಿಸಿ.');
+    });
   }
 
   void _handleRecognitionResult(String text) async {
@@ -133,8 +172,15 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
           });
         }
 
-        // Speak confirmation with extracted name only
-        await _speak('ನೀವು "$extractedName" ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಇದನ್ನು ನಿಮ್ಮ ಹೆಸರಾಗಿ ಉಳಿಸಬೇಕೇ?');
+        // Speak confirmation with extracted name and then listen for yes/no
+        await _speakThenListen('ನೀವು "$extractedName" ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಇದನ್ನು ನಿಮ್ಮ ಹೆಸರಾಗಿ ಉಳಿಸಬೇಕೇ?', (reply) async {
+          final lower = reply.toLowerCase();
+          if (lower.contains('ಹೌದು') || lower.contains('yes') || lower.contains('ಸರಿ')) {
+            await _handleConfirm();
+          } else {
+            await _handleReject();
+          }
+        });
       } else {
         await _speak('ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಸ್ಪಷ್ಟವಾಗಿ ಹೇಳಿ. ಉದಾಹರಣೆ: "ನನ್ನ ಹೆಸರು ರಮ್ಯಾ" ಅಥವಾ "My name is Ramya"');
       }
@@ -151,7 +197,14 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
           });
         }
         final display = _formatDateKn(parsed);
-        await _speak('ನೀವು $display ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಈ ದಿನಾಂಕವನ್ನು ಉಳಿಸಬೇಕೇ?');
+        await _speakThenListen('ನೀವು $display ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಈ ದಿನಾಂಕವನ್ನು ಉಳಿಸಬೇಕೇ?', (reply) async {
+          final lower = reply.toLowerCase();
+          if (lower.contains('ಹೌದು') || lower.contains('yes') || lower.contains('ಸರಿ')) {
+            await _handleConfirm();
+          } else {
+            await _handleReject();
+          }
+        });
       } else {
         await _speak('ದಿನಾಂಕವನ್ನು ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ.');
       }

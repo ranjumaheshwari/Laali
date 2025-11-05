@@ -60,12 +60,37 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
       setState(() => isSpeaking = true);
     });
     ttsService.setCompletionHandler(() {
+      // TTS finished speaking — mark as not speaking and auto-restart mic
       setState(() => isSpeaking = false);
+      // Small delay to let audio channel settle, then start listening if idle
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        // Safety checks: only auto-start if assistant just spoke (messages not empty),
+        // and no AI processing or manual listening is happening.
+        if (!isListening && !isLoadingAI && messages.isNotEmpty) {
+          _toggleListening();
+        }
+      });
     });
     ttsService.setErrorHandler((err) {
       setState(() => isSpeaking = false);
       debugPrint('TTS error: $err');
     });
+  }
+
+  /// Ensure the microphone/speech recognizer is ready (requests permissions via initialize).
+  Future<bool> _checkMicrophonePermission() async {
+    try {
+      final available = await speechService.initialize();
+      if (!available) {
+        await _speak('ದಯವಿಟ್ಟು ಅಪ್ಲಿಕೇಶನ್‌ಗೆ ಮೈಕ್ರೊಫೋನ್ ಅನುಮತಿ ನೀಡಿ.');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      debugPrint('Permission check error: $e');
+      return false;
+    }
   }
 
   Future<void> _loadUserMode() async {
@@ -85,7 +110,7 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
 
   Future<void> _toggleListening() async {
     if (isSpeaking || isLoadingAI) {
-      // If busy, try again later
+      debugPrint('Cannot listen - busy speaking or processing AI');
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) _toggleListening();
       });
@@ -93,35 +118,47 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
     }
 
     if (!isListening) {
+      // Ensure microphone permission and speech service availability
+      final ok = await _checkMicrophonePermission();
+      if (!ok) return;
+
+      debugPrint('Starting speech recognition...');
       setState(() {
         isListening = true;
         currentTranscript = '';
       });
 
       try {
-        await speechService.startListening((text, isFinal) {
+        await speechService.startListeningWithRetry((text, isFinal) async {
+          debugPrint('Speech result: "$text" final: $isFinal');
           if (!mounted) return;
           setState(() => currentTranscript = text);
 
           if (isFinal && text.isNotEmpty) {
+            debugPrint('Final speech result: $text');
             _onSpeechResult(text);
           } else if (isFinal) {
-            setState(() => isListening = false);
-            // restart listening after short delay
+            debugPrint('Empty final result');
+            if (mounted) setState(() => isListening = false);
+            // Retry listening after short delay
             Future.delayed(const Duration(seconds: 1), () {
-              if (mounted && !isListening && !isSpeaking && !isLoadingAI) _toggleListening();
+              if (mounted && !isListening && !isSpeaking && !isLoadingAI) {
+                _toggleListening();
+              }
             });
           }
-        }, localeId: 'kn-IN');
-      } catch (e) {
-        debugPrint('Speech error: $e');
-        setState(() => isListening = false);
-        await _speak('ಕ್ಷಮಿಸಿ, ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ವಿಫಲವಾಗಿದೆ.');
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted && !isListening && !isSpeaking && !isLoadingAI) _toggleListening();
+        }, localeId: 'kn-IN', retries: 2, attemptTimeout: const Duration(seconds: 10), onFailure: () async {
+          debugPrint('Speech recognition failed after retries');
+          if (mounted) setState(() => isListening = false);
+          await _speak('ಕ್ಷಮಿಸಿ, ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ವಿಫಲವಾಗಿದೆ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.');
         });
+      } catch (e) {
+        debugPrint('Speech listening error: $e');
+        if (mounted) setState(() => isListening = false);
+        await _speak('ಕ್ಷಮಿಸಿ, ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ಸೇವೆಯಲ್ಲಿ ಸಮಸ್ಯೆ ಉಂಟಾಗಿದೆ.');
       }
     } else {
+      debugPrint('Stopping speech recognition...');
       await speechService.stop();
       setState(() => isListening = false);
     }
@@ -157,12 +194,7 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
 
       await _speak(response);
 
-      // Auto-restart listening after short pause
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted && !isListening && !isSpeaking && !isLoadingAI) {
-          _toggleListening();
-        }
-      });
+      // IMPROVED: Let TTS completion handler decide when to restart listening
     } catch (e) {
       debugPrint('AI response error: $e');
       setState(() {
@@ -173,7 +205,8 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
       _scrollToBottom();
       await _speak('ಕ್ಷಮಿಸಿ, ಪ್ರತಿಕ್ರಿಯೆ ಪಡೆಯಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ.');
 
-      Future.delayed(const Duration(seconds: 1), () {
+      // Restart listening after error
+      Future.delayed(const Duration(seconds: 2), () {
         if (mounted && !isListening && !isSpeaking && !isLoadingAI) {
           _toggleListening();
         }
@@ -253,50 +286,50 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
                   constraints: const BoxConstraints(maxWidth: 900),
                   child: messages.isEmpty
                       ? const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(height: 40),
-                            Text('ಸಂಭಾಷಣೆ ಪ್ರಾರಂಭಿಸಲು ಮೈಕ್ರೊಫೋನ್ ಟ್ಯಾಪ್ ಮಾಡಿ', textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
-                            SizedBox(height: 8),
-                            Text('ಲಕ್ಷಣಗಳನ್ನು ವರದಿ ಮಾಡಿ, ಪ್ರಶ್ನೆಗಳನ್ನು ಕೇಳಿ, ಅಥವಾ ಆರೋಗ್ಯ ಸಲಹೆ ಪಡೆಯಿರಿ', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Colors.grey)),
-                            SizedBox(height: 20),
-                          ],
-                        )
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(height: 40),
+                      Text('ಸಂಭಾಷಣೆ ಪ್ರಾರಂಭಿಸಲು ಮೈಕ್ರೊಫೋನ್ ಟ್ಯಾಪ್ ಮಾಡಿ', textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
+                      SizedBox(height: 8),
+                      Text('ಲಕ್ಷಣಗಳನ್ನು ವರದಿ ಮಾಡಿ, ಪ್ರಶ್ನೆಗಳನ್ನು ಕೇಳಿ, ಅಥವಾ ಆರೋಗ್ಯ ಸಲಹೆ ಪಡೆಯಿರಿ', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Colors.grey)),
+                      SizedBox(height: 20),
+                    ],
+                  )
                       : ListView.builder(
-                          controller: _scrollController,
-                          itemCount: messages.length,
-                          itemBuilder: (context, index) {
-                            final msg = messages[index];
-                            final isUser = msg.role == Role.user;
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 6),
-                              child: Row(
-                                mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-                                children: [
-                                  Flexible(
-                                    child: Container(
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: isUser ? theme.primaryColor : Colors.grey.shade100,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(isUser ? 'ನೀವು' : 'ಸಹಾಯಕ', style: TextStyle(fontWeight: FontWeight.w600, color: isUser ? Colors.white : null)),
-                                          const SizedBox(height: 6),
-                                          Text(msg.content, style: TextStyle(color: isUser ? Colors.white : null)),
-                                          const SizedBox(height: 8),
-                                          Text(_formatTime(msg.timestamp), style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                    controller: _scrollController,
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final msg = messages[index];
+                      final isUser = msg.role == Role.user;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                          children: [
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: isUser ? theme.primaryColor : Colors.grey.shade100,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(isUser ? 'ನೀವು' : 'ಸಹಾಯಕ', style: TextStyle(fontWeight: FontWeight.w600, color: isUser ? Colors.white : null)),
+                                    const SizedBox(height: 6),
+                                    Text(msg.content, style: TextStyle(color: isUser ? Colors.white : null)),
+                                    const SizedBox(height: 8),
+                                    Text(_formatTime(msg.timestamp), style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                                  ],
+                                ),
                               ),
-                            );
-                          },
+                            ),
+                          ],
                         ),
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
@@ -320,6 +353,12 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
                         decoration: BoxDecoration(color: theme.primaryColor.withAlpha(20), borderRadius: BorderRadius.circular(8)),
                         child: Text('"$currentTranscript"', textAlign: TextAlign.center, style: const TextStyle(fontStyle: FontStyle.italic)),
                       ),
+                    // Debug status line
+                    const SizedBox(height: 6),
+                    Text(
+                      'Status: ${isListening ? 'Listening' : isSpeaking ? 'Speaking' : isLoadingAI ? 'Processing' : 'Ready'}',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
                     const SizedBox(height: 8),
                     Column(
                       children: [
