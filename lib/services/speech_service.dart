@@ -27,6 +27,9 @@ class SpeechService {
 
   bool get isAvailable => _available;
 
+  /// Whether the underlying plugin is currently listening.
+  bool get isListening => _stt.isListening;
+
   String _normalizeLocale(String requested) => requested.replaceAll('-', '_');
 
   Future<void> startListening(
@@ -37,6 +40,12 @@ class SpeechService {
     if (!_available) {
       final ok = await initialize();
       if (!ok) return;
+    }
+
+    // Prevent starting a second concurrent listen session
+    if (_stt.isListening) {
+      debugPrint('startListening called but already listening; ignoring');
+      return;
     }
 
     final chosenLocale = _normalizeLocale(localeId);
@@ -74,6 +83,12 @@ class SpeechService {
     if (!_available) {
       final ok = await initialize();
       if (!ok) return;
+    }
+
+    // Prevent starting if already listening
+    if (_stt.isListening) {
+      debugPrint('startListeningWithMixedLanguage called but already listening; ignoring');
+      return;
     }
 
     // First try Kannada (kn-IN) to bias recognition towards Kannada.

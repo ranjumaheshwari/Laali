@@ -20,6 +20,9 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
   bool isLoadingAI = false;
   String? userMode;
 
+  // Guard to prevent overlapping speak/listen flows
+  bool _isAwaitingResponse = false;
+
   @override
   void initState() {
     super.initState();
@@ -28,7 +31,7 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
     _addWelcomeMessage();
     // Auto-start listening after short delay
     Future.delayed(const Duration(seconds: 2), () {
-      if (mounted && !isListening && !isSpeaking && !isLoadingAI) {
+      if (mounted && !isListening && !isSpeaking && !isLoadingAI && !_isAwaitingResponse) {
         _toggleListening();
       }
     });
@@ -42,7 +45,7 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
 
   // Add a small welcome message in the chat history (non-blocking)
   void _addWelcomeMessage() {
-    const welcomeText = 'ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ ಧ್ವನಿ ಸಹಾಯಕ — ಸಮಸ್ಯೆಗಳನ್ನು ಹೇಳಿ ಅಥವಾ ಪ್ರಶ್ನೆ ಕೇಳಿ.';
+    const welcomeText = 'ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ ಧ್ವನಿ ಸಹಾಯಕ, — ಸಮಸ್ಯೆಗಳನ್ನು ಹೇಳಿ ಅಥವಾ ಪ್ರಶ್ನೆ ಕೇಳಿ.';
     final msg = Message(role: Role.assistant, content: welcomeText, timestamp: DateTime.now());
     if (mounted) {
       setState(() {
@@ -57,23 +60,32 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
     await ttsService.setPitch(1.0);
 
     ttsService.setStartHandler(() {
-      setState(() => isSpeaking = true);
+      if (mounted) setState(() => isSpeaking = true);
     });
     ttsService.setCompletionHandler(() {
       // TTS finished speaking — mark as not speaking and auto-restart mic
-      setState(() => isSpeaking = false);
+      if (mounted) setState(() => isSpeaking = false);
       // Small delay to let audio channel settle, then start listening if idle
-      Future.delayed(const Duration(milliseconds: 300), () {
+      Future.delayed(const Duration(milliseconds: 500), () async {
         if (!mounted) return;
         // Safety checks: only auto-start if assistant just spoke (messages not empty),
         // and no AI processing or manual listening is happening.
-        if (!isListening && !isLoadingAI && messages.isNotEmpty) {
-          _toggleListening();
+        if (!isListening && !isLoadingAI && messages.isNotEmpty && !_isAwaitingResponse) {
+          // ensure recognizer is initialized
+          final ok = await speechService.initialize();
+          if (ok) {
+            // small extra delay to be safe on some devices
+            await Future.delayed(const Duration(milliseconds: 200));
+            if (!mounted) return;
+            if (!isListening && !_isAwaitingResponse) {
+              _toggleListening();
+            }
+          }
         }
       });
     });
     ttsService.setErrorHandler((err) {
-      setState(() => isSpeaking = false);
+      if (mounted) setState(() => isSpeaking = false);
       debugPrint('TTS error: $err');
     });
   }
@@ -102,6 +114,10 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
 
   Future<void> _speak(String text) async {
     try {
+      // stop any ongoing recognition to avoid collisions
+      try {
+        await speechService.stop();
+      } catch (_) {}
       await ttsService.speak(text);
     } catch (e) {
       debugPrint('TTS speak error: $e');
@@ -117,50 +133,53 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
       return;
     }
 
-    if (!isListening) {
-      // Ensure microphone permission and speech service availability
-      final ok = await _checkMicrophonePermission();
-      if (!ok) return;
+    // Avoid starting if we're already in a listen flow
+    if (_isAwaitingResponse || speechService.isListening) {
+      debugPrint('Already listening or waiting - ignoring toggle');
+      return;
+    }
 
-      debugPrint('Starting speech recognition...');
-      setState(() {
-        isListening = true;
-        currentTranscript = '';
-      });
+    // Ensure microphone permission and speech service availability
+    final ok = await _checkMicrophonePermission();
+    if (!ok) return;
 
-      try {
-        await speechService.startListeningWithRetry((text, isFinal) async {
-          debugPrint('Speech result: "$text" final: $isFinal');
-          if (!mounted) return;
-          setState(() => currentTranscript = text);
-
-          if (isFinal && text.isNotEmpty) {
-            debugPrint('Final speech result: $text');
-            _onSpeechResult(text);
-          } else if (isFinal) {
-            debugPrint('Empty final result');
-            if (mounted) setState(() => isListening = false);
-            // Retry listening after short delay
-            Future.delayed(const Duration(seconds: 1), () {
-              if (mounted && !isListening && !isSpeaking && !isLoadingAI) {
-                _toggleListening();
-              }
-            });
-          }
-        }, localeId: 'kn-IN', retries: 2, attemptTimeout: const Duration(seconds: 10), onFailure: () async {
-          debugPrint('Speech recognition failed after retries');
-          if (mounted) setState(() => isListening = false);
-          await _speak('ಕ್ಷಮಿಸಿ, ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ವಿಫಲವಾಗಿದೆ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.');
-        });
-      } catch (e) {
-        debugPrint('Speech listening error: $e');
-        if (mounted) setState(() => isListening = false);
-        await _speak('ಕ್ಷಮಿಸಿ, ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ಸೇವೆಯಲ್ಲಿ ಸಮಸ್ಯೆ ಉಂಟಾಗಿದೆ.');
-      }
-    } else {
-      debugPrint('Stopping speech recognition...');
+    // Ensure any previous listeners are stopped
+    try {
       await speechService.stop();
-      setState(() => isListening = false);
+    } catch (_) {}
+
+    debugPrint('Starting speech recognition...');
+    setState(() {
+      isListening = true;
+      currentTranscript = '';
+    });
+
+    _isAwaitingResponse = true;
+
+    try {
+      await speechService.startListeningWithEnhancedRetry((text, isFinal) async {
+        debugPrint('Speech result: "$text" final: $isFinal');
+        if (!mounted) return;
+        setState(() => currentTranscript = text);
+
+        if (isFinal || text.trim().length > 2) {
+          debugPrint('Final speech result or long partial: $text');
+          if (mounted) setState(() => isListening = false);
+          _isAwaitingResponse = false;
+          // handle the user input
+          _onSpeechResult(text);
+        }
+      }, localeId: 'kn-IN', maxRetries: 2, initialTimeout: const Duration(seconds: 10), onFailure: () async {
+        debugPrint('Speech recognition failed after retries');
+        if (mounted) setState(() => isListening = false);
+        _isAwaitingResponse = false;
+        await _speak('ಕ್ಷಮಿಸಿ, ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ವಿಫಲವಾಗಿದೆ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.');
+      });
+    } catch (e) {
+      debugPrint('Speech listening error: $e');
+      if (mounted) setState(() => isListening = false);
+      _isAwaitingResponse = false;
+      await _speak('ಕ್ಷಮಿಸಿ, ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ಸೇವೆಯಲ್ಲಿ ಸಮಸ್ಯೆ ಉಂಟಾಗಿದೆ.');
     }
   }
 
@@ -192,6 +211,7 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
       });
       _scrollToBottom();
 
+      // Speak response. TTS completion handler will auto-restart listening safely.
       await _speak(response);
 
       // IMPROVED: Let TTS completion handler decide when to restart listening
@@ -207,7 +227,7 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
 
       // Restart listening after error
       Future.delayed(const Duration(seconds: 2), () {
-        if (mounted && !isListening && !isSpeaking && !isLoadingAI) {
+        if (mounted && !isListening && !isSpeaking && !isLoadingAI && !_isAwaitingResponse) {
           _toggleListening();
         }
       });

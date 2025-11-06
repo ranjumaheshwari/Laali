@@ -25,6 +25,9 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
   bool isListening = false;
   bool isSpeaking = false;
 
+  // Guard to prevent overlapping listen/speak flows
+  bool _isAwaitingResponse = false;
+
   // Use the shared aiService from lib/services/ai_service.dart
   @override
   void initState() {
@@ -48,25 +51,26 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     });
     ttsService.setCompletionHandler(() {
       if (mounted) setState(() => isSpeaking = false);
+      // small delay to allow audio focus to settle
+      Future.delayed(const Duration(milliseconds: 400), () {
+        // Do not auto-start listening here; flows will explicitly start listening
+      });
     });
     ttsService.setErrorHandler((err) {
       debugPrint('TTS error: $err');
       if (mounted) setState(() => isSpeaking = false);
     });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!hasSpokenIntro) {
-        Future.delayed(const Duration(milliseconds: 800), () {
-          _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
-          if (mounted) setState(() => hasSpokenIntro = true);
-        });
-      }
-    });
+    // NOTE: initial speak is now handled in _startAutoVoiceSignup to avoid duplicates
   }
 
   Future<void> _speak(String text) async {
     if (text.isEmpty) return;
     try {
+      // stop any existing recognizer to avoid collisions
+      try {
+        await speechService.stop();
+      } catch (_) {}
       await ttsService.speak(text);
     } catch (e) {
       debugPrint('TTS speak error: $e');
@@ -88,13 +92,21 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
   }
 
   Future<void> _startListeningForName() async {
-    if (isSpeaking) return;
+    if (isSpeaking || _isAwaitingResponse) return;
 
     final ok = await speechService.initialize();
     if (!ok) {
       await _speak('ಕ್ಷಮಿಸಿ, ಮಾತಿನ ಗುರುತಿಸುವಿಕೆ ಲಭ್ಯವಿಲ್ಲ.');
       return;
     }
+
+    // Ensure previous listeners are stopped
+    try {
+      await speechService.stop();
+    } catch (_) {}
+
+    // slight delay to ensure audio focus released after any TTS
+    await Future.delayed(const Duration(milliseconds: 400));
 
     if (mounted) {
       setState(() {
@@ -103,50 +115,74 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       });
     }
 
+    _isAwaitingResponse = true;
+
     try {
-      await speechService.startListeningWithRetry((text, isFinal) {
+      await speechService.startListeningWithEnhancedRetry((text, isFinal) async {
         if (!mounted) return;
         setState(() => transcript = text);
-        if (isFinal && text.isNotEmpty) {
-          // Handle recognized result (existing flow)
+
+        // Accept final OR sufficiently long partial as fallback
+        if (isFinal || text.trim().length > 2) {
+          if (mounted) setState(() => isListening = false);
+          _isAwaitingResponse = false;
+          // Handle recognized result
           _handleRecognitionResult(text);
-          // If still not at confirm step, keep listening for name again
+
+          // If still expecting username, restart listening after small delay
           if (step == SignupStep.username) {
-            Future.delayed(const Duration(milliseconds: 800), () async {
-              if (mounted) await _startListeningForName();
-            });
-          } else {
-            // stop listening if moved to confirm
-            setState(() => isListening = false);
+            await Future.delayed(const Duration(milliseconds: 800));
+            if (mounted && !isListening && !isSpeaking) {
+              await _startListeningForName();
+            }
           }
         } else if (isFinal) {
-          // no words detected
-          setState(() => isListening = false);
+          // final but empty
+          if (mounted) setState(() => isListening = false);
+          _isAwaitingResponse = false;
         }
-      }, localeId: 'kn-IN', retries: 2, attemptTimeout: const Duration(seconds: 10), onFailure: () async {
+      }, localeId: 'kn-IN', maxRetries: 2, initialTimeout: const Duration(seconds: 10), onFailure: () async {
         if (!mounted) return;
         setState(() => isListening = false);
+        _isAwaitingResponse = false;
         await _speak('ಕ್ಷಮಿಸಿ, ನಾನು ನಿಮ್ಮನ್ನು ಕೇಳಲಾರದಿದ್ದು. ದಯವಿಟ್ಟು ಮೈಕ್ರೊಫೋನ್ ಅನುಮತಿಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.');
       });
     } catch (e) {
       debugPrint('startListeningForName error: $e');
       if (mounted) setState(() => isListening = false);
+      _isAwaitingResponse = false;
     }
   }
 
   /// Speak a prompt and listen for a single final reply, then call onFinal.
   Future<void> _speakThenListen(String prompt, Future<void> Function(String) onFinal) async {
+    if (_isAwaitingResponse) return;
+    _isAwaitingResponse = true;
     await _speak(prompt);
-    // Start listening and wait for a final result
-    await speechService.startListeningWithRetry((text, isFinal) async {
-      if (isFinal) {
-        await onFinal(text);
-      } else {
-        if (mounted) setState(() => transcript = text);
-      }
-    }, localeId: 'kn-IN', retries: 2, attemptTimeout: const Duration(seconds: 10), onFailure: () async {
-      await _speak('ಕ್ಷಮಿಸಿ, ನನಗೇ ನಿಮ್ಮ ಧ್ವನಿ ಕೇಳಿಸುತಿಲ್ಲ. ದಯವಿಟ್ಟು ಮೈಕ್ರೊಫೋನ್ ಪರಿಶೀಲಿಸಿ.');
-    });
+    // Wait for audio focus to settle
+    await Future.delayed(const Duration(milliseconds: 600));
+
+    // Ensure previous listeners are stopped
+    try {
+      await speechService.stop();
+    } catch (_) {}
+
+    try {
+      await speechService.startListeningWithEnhancedRetry((text, isFinal) async {
+        if (!mounted) return;
+        setState(() => transcript = text);
+        if (isFinal || text.trim().length > 2) {
+          _isAwaitingResponse = false;
+          await onFinal(text);
+        }
+      }, localeId: 'kn-IN', maxRetries: 2, initialTimeout: const Duration(seconds: 10), onFailure: () async {
+        _isAwaitingResponse = false;
+        await _speak('ಕ್ಷಮಿಸಿ, ನನಗೇ ನಿಮ್ಮ ಧ್ವನಿ ಕೇಳಿಸುತಿಲ್ಲ. ದಯವಿಟ್ಟು ಮೈಕ್ರೊಫೋನ್ ಪರಿಶೀಲಿಸಿ.');
+      });
+    } catch (e) {
+      debugPrint('speakThenListen error: $e');
+      _isAwaitingResponse = false;
+    }
   }
 
   void _handleRecognitionResult(String text) async {
