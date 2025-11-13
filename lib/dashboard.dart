@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services/tts_service.dart';
+import 'services/supabase_service.dart';
+import 'welcome_page.dart';
+import 'voice_interface_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -14,13 +18,38 @@ class _DashboardPageState extends State<DashboardPage> {
   DateTime lmpDate = DateTime.now();
   GestationalAge? ga;
   bool loading = true;
+  bool isSpeaking = false;
 
-  // Mock data (mirrors your TS mock)
-  final String riskLevel = 'Low';
-  final List<RecentSymptom> recentSymptoms = [
-    RecentSymptom(symptom: 'Mild headache', date: 'Yesterday', severity: 'Low'),
-    RecentSymptom(symptom: 'Blood pressure check', date: '2 days ago', severity: 'Normal'),
-  ];
+  final SupabaseService _supa = SupabaseService();
+
+  String riskLevel = 'Low';
+  List<RecentSymptom> recentSymptoms = [];
+
+  // SAFE NAVIGATION METHODS
+  void _navigateToWelcome() {
+    try {
+      Navigator.pushReplacementNamed(context, '/welcome');
+    } catch (e) {
+      debugPrint('Navigation to welcome failed: $e');
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const WelcomePage()),
+            (route) => false,
+      );
+    }
+  }
+
+  void _navigateToVoice() {
+    try {
+      Navigator.pushNamed(context, '/voice');
+    } catch (e) {
+      debugPrint('Navigation to voice failed: $e');
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const VoiceInterfacePage()),
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -31,8 +60,19 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _initTts() async {
     await ttsService.setLanguage('kn-IN');
-    await ttsService.setSpeechRate(0.9); // approx mapping
+    await ttsService.setSpeechRate(0.4);
     await ttsService.setPitch(1.0);
+
+    ttsService.setStartHandler(() {
+      if (mounted) setState(() => isSpeaking = true);
+    });
+    ttsService.setCompletionHandler(() {
+      if (mounted) setState(() => isSpeaking = false);
+    });
+    ttsService.setErrorHandler((err) {
+      debugPrint('TTS error: $err');
+      if (mounted) setState(() => isSpeaking = false);
+    });
   }
 
   Future<void> _loadPrefsAndCalculate() async {
@@ -53,34 +93,122 @@ class _DashboardPageState extends State<DashboardPage> {
           lmpDate = DateTime.now();
         }
         ga = calculateGestationalAge(lmpDate);
-        loading = false;
       });
+    }
+
+    await _loadSupabaseData();
+
+    if (mounted) {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _loadSupabaseData() async {
+    try {
+      // Load profile for username
+      final profile = await _supa.getProfile();
+      if (profile != null && profile['username'] != null) {
+        final dbUsername = profile['username'];
+        if (dbUsername.isNotEmpty && mounted) {
+          setState(() => username = dbUsername);
+        }
+      }
+
+      // Load recent symptoms from visit_notes
+      final currentUserId = _supa.currentUser?.id;
+      if (currentUserId != null) {
+        final notesData = await Supabase.instance.client
+            .from('visit_notes')
+            .select('transcript, created_at')
+            .eq('user_id', currentUserId)
+            .order('created_at', ascending: false)
+            .limit(5);
+
+        final List<RecentSymptom> loadedSymptoms = [];
+        for (final note in notesData) {
+          final transcript = (note['transcript'] ?? '').toString().trim();
+          if (transcript.isNotEmpty) {
+            final snippet = transcript.length > 60
+                ? '${transcript.substring(0, 60)}...'
+                : transcript;
+            loadedSymptoms.add(RecentSymptom(
+                symptom: snippet,
+                date: _formatRelativeTime(note['created_at']),
+                severity: 'Normal'
+            ));
+          }
+        }
+
+        // Load risk score
+        final riskData = await Supabase.instance.client
+            .from('risk_scores')
+            .select('risk_level')
+            .eq('user_id', currentUserId)
+            .order('computed_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
+        if (mounted) {
+          setState(() {
+            recentSymptoms = loadedSymptoms;
+            if (riskData != null && riskData['risk_level'] != null) {
+              riskLevel = riskData['risk_level'];
+            }
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Supabase data loading error: $e');
+      if (mounted) {
+        setState(() {
+          recentSymptoms = [
+            RecentSymptom(symptom: 'ತಲೆನೋವು', date: 'ನಿನ್ನೆ', severity: 'ಕಡಿಮೆ'),
+            RecentSymptom(symptom: 'ರಕ್ತದ ಒತ್ತಡ ಪರಿಶೀಲನೆ', date: '2 ದಿನಗಳ ಹಿಂದೆ', severity: 'ಸಾಮಾನ್ಯ'),
+          ];
+        });
+      }
+    }
+  }
+
+  String _formatRelativeTime(String? dateString) {
+    if (dateString == null) return 'ಇತ್ತೀಚೆಗೆ';
+    try {
+      final date = DateTime.parse(dateString);
+      final now = DateTime.now();
+      final difference = now.difference(date);
+
+      if (difference.inDays == 0) return 'ಇಂದು';
+      if (difference.inDays == 1) return 'ನಿನ್ನೆ';
+      if (difference.inDays < 7) return '${difference.inDays} ದಿನಗಳ ಹಿಂದೆ';
+      if (difference.inDays < 30) return '${difference.inDays ~/ 7} ವಾರಗಳ ಹಿಂದೆ';
+      return '${difference.inDays ~/ 30} ತಿಂಗಳ ಹಿಂದೆ';
+    } catch (_) {
+      return 'ಇತ್ತೀಚೆಗೆ';
     }
   }
 
   Future<void> _speakSummary() async {
-    if (ga == null) return;
+    if (ga == null || isSpeaking) return;
+
     final dueDateStr = formatDueDate(ga!.dueDate);
     final gaStr = formatGestationalAge(ga!);
     final trimester = ga!.trimester;
     final recent = recentSymptoms.isNotEmpty
         ? recentSymptoms.map((s) => s.symptom).join(', ')
         : 'ನೀವು ಇತ್ತೀಚೆಗೆ ಯಾವುದೇ ಲಕ್ಷಣಗಳನ್ನು ವರದಿ ಮಾಡಿಲ್ಲ';
+
     final summary =
         'ನಮಸ್ಕಾರ $username. ನೀವು ಪ್ರಸ್ತುತ ಗರ್ಭಾವಸ್ಥೆಯ $gaStr ನಲ್ಲಿದ್ದೀರಿ, ಇದು $trimester ನೇ ತ್ರೈಮಾಸಿಕ. ನಿಮ್ಮ ನಿರೀಕ್ಷಿತ ಹೆರಿಗೆ ದಿನಾಂಕ $dueDateStr. ನಿಮ್ಮ ಗರ್ಭಾವಸ್ಥೆಯ ಅಪಾಯ ಮೌಲ್ಯಮಾಪನ $riskLevel ಆಗಿದೆ. ${recentSymptoms.isNotEmpty ? 'ನೀವು ಇತ್ತೀಚೆಗೆ ವರದಿ ಮಾಡಿದ ಲಕ್ಷಣಗಳು: $recent.' : recent}';
+
     await ttsService.speak(summary);
   }
 
   Color _riskColor(String level) {
     switch (level) {
-      case 'Low':
-        return Colors.green;
-      case 'Medium':
-        return Colors.orange;
-      case 'High':
-        return Colors.red;
-      default:
-        return Colors.grey;
+      case 'Low': return Colors.green;
+      case 'Medium': return Colors.orange;
+      case 'High': return Colors.red;
+      default: return Colors.grey;
     }
   }
 
@@ -107,10 +235,7 @@ class _DashboardPageState extends State<DashboardPage> {
             children: [
               const CircularProgressIndicator(color: Color(0xFF00796B)),
               const SizedBox(height: 16),
-              Text(
-                'ಲೋಡ್ ಆಗುತ್ತಿದೆ...',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
+              Text('ಲೋಡ್ ಆಗುತ್ತಿದೆ...', style: Theme.of(context).textTheme.bodyMedium),
             ],
           ),
         ),
@@ -124,7 +249,7 @@ class _DashboardPageState extends State<DashboardPage> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Color(0xFF00796B)),
-          onPressed: () => Navigator.pushNamed(context, '/voice'),
+          onPressed: _navigateToWelcome,
           tooltip: 'ಹಿಂದೆ',
         ),
         title: Text('ಡ್ಯಾಶ್‌ಬೋರ್ಡ್', style: Theme.of(context).textTheme.titleLarge),
@@ -132,14 +257,9 @@ class _DashboardPageState extends State<DashboardPage> {
         elevation: 1,
         actions: [
           IconButton(
-            icon: const Icon(Icons.mic, color: Color(0xFF00796B)),
-            onPressed: _speakSummary,
+            icon: Icon(isSpeaking ? Icons.volume_up : Icons.mic, color: const Color(0xFF00796B)),
+            onPressed: isSpeaking ? null : _speakSummary,
             tooltip: 'ಸಾರಾಂಶ ಓದಿ',
-          ),
-          IconButton(
-            icon: const Icon(Icons.chat, color: Color(0xFF00796B)),
-            onPressed: () => Navigator.pushReplacementNamed(context, '/voice'),
-            tooltip: 'ಧ್ವನಿ ಸಹಾಯಕ',
           ),
         ],
       ),
@@ -188,7 +308,6 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 8),
                         Text('ತ್ರೈಮಾಸಿಕ ${ga!.trimester}', style: Theme.of(context).textTheme.bodyMedium),
                         const SizedBox(height: 20),
-                        // Progress bar and due date... keep existing code
                         const SizedBox(height: 12),
                         Text('ನಿರೀಕ್ಷಿತ ಹೆರಿಗೆ ದಿನಾಂಕ: ${formatDueDate(ga!.dueDate)}', style: Theme.of(context).textTheme.bodyMedium),
                       ],
@@ -272,10 +391,10 @@ class _DashboardPageState extends State<DashboardPage> {
                               final bgColor = item.severity == 'Low'
                                   ? Colors.green.withAlpha(30)
                                   : item.severity == 'Normal'
-                                      ? Theme.of(context).primaryColor.withAlpha(30)
-                                      : Colors.orange.withAlpha(30);
+                                  ? Theme.of(context).primaryColor.withAlpha(30)
+                                  : Colors.orange.withAlpha(30);
                               final badgeText = _translateSeverity(item.severity);
-                              final dateDisplay = item.date == 'Yesterday' ? 'ನಿನ್ನೆ' : item.date == '2 days ago' ? '2 ದಿನಗಳ ಹಿಂದೆ' : item.date;
+                              final dateDisplay = item.date;
                               return Container(
                                 margin: const EdgeInsets.symmetric(vertical: 6),
                                 padding: const EdgeInsets.all(12),
@@ -283,13 +402,15 @@ class _DashboardPageState extends State<DashboardPage> {
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(item.symptom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                        const SizedBox(height: 4),
-                                        Text(dateDisplay, style: TextStyle(color: Colors.grey[700], fontSize: 13)),
-                                      ],
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(item.symptom, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                          const SizedBox(height: 4),
+                                          Text(dateDisplay, style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                                        ],
+                                      ),
                                     ),
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -318,13 +439,14 @@ class _DashboardPageState extends State<DashboardPage> {
                           padding: EdgeInsets.symmetric(vertical: 14.0),
                           child: Text('ಲಕ್ಷಣವನ್ನು ವರದಿ ಮಾಡಿ', style: TextStyle(fontSize: 16)),
                         ),
-                        onPressed: () => Navigator.pushNamed(context, '/voice'),
+                        onPressed: _navigateToVoice,
                         style: ElevatedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
+
                 // Voice helper card
                 Card(
                   elevation: 2,
@@ -335,7 +457,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.mic, size: 20, color: Theme.of(context).primaryColor),
+                            Icon(Icons.chat, size: 20, color: Theme.of(context).primaryColor),
                             const SizedBox(width: 8),
                             Text('ಧ್ವನಿ ಸಹಾಯಕ', style: Theme.of(context).textTheme.titleLarge),
                           ],
@@ -346,7 +468,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         ElevatedButton.icon(
                           icon: const Icon(Icons.mic),
                           label: const Text('ಪ್ರಶ್ನೆ ಕೇಳಿ'),
-                          onPressed: () => Navigator.pushReplacementNamed(context, '/voice'),
+                          onPressed: _navigateToVoice,
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1976D2), foregroundColor: Colors.white),
                         ),
                       ],
@@ -363,7 +485,6 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-/// Simple model for recent symptom
 class RecentSymptom {
   final String symptom;
   final String date;
@@ -372,13 +493,12 @@ class RecentSymptom {
   RecentSymptom({required this.symptom, required this.date, required this.severity});
 }
 
-/// GestationalAge result object
 class GestationalAge {
   final int weeks;
-  final int days; // leftover days
+  final int days;
   final DateTime dueDate;
-  final double percentComplete; // 0..100
-  final int trimester; // 1,2,3
+  final double percentComplete;
+  final int trimester;
 
   GestationalAge({
     required this.weeks,
@@ -389,12 +509,9 @@ class GestationalAge {
   });
 }
 
-/// Calculate gestational age from LMP date:
-/// - Pregnancy length assumed 280 days (40 weeks)
-/// - weeks and days elapsed, percent complete relative to 280 days
 GestationalAge calculateGestationalAge(DateTime lmp) {
   final now = DateTime.now();
-  final dueDate = lmp.add(const Duration(days: 280)); // 40 * 7
+  final dueDate = lmp.add(const Duration(days: 280));
   final elapsed = now.difference(lmp).inDays.clamp(0, 280);
   final weeks = elapsed ~/ 7;
   final days = elapsed % 7;
@@ -410,25 +527,13 @@ GestationalAge calculateGestationalAge(DateTime lmp) {
 }
 
 String formatGestationalAge(GestationalAge ga) {
-  // e.g. "12w 3d"
   return '${ga.weeks} ವಾರಗಳು ${ga.days} ದಿನಗಳು';
 }
 
 String formatDueDate(DateTime due) {
-  // Format like: 15 Aug 2025
   final months = [
-    'ಜನವರಿ',
-    'ಫೆಬ್ರವರಿ',
-    'ಮಾರ್ಚ್',
-    'ಎಪ್ರಿಲ್',
-    'ಮೇ',
-    'ಜೂನ್',
-    'ಜುಲೈ',
-    'ಆಗಸ್ಟ್',
-    'ಸೆಪ್ಟೆಂಬರ್',
-    'ಅಕ್ಟೋಬರ್',
-    'ನವೆಂಬರ್',
-    'ಡಿಸೆಂಬರ್'
+    'ಜನವರಿ', 'ಫೆಬ್ರವರಿ', 'ಮಾರ್ಚ್', 'ಎಪ್ರಿಲ್', 'ಮೇ', 'ಜೂನ್',
+    'ಜುಲೈ', 'ಆಗಸ್ಟ್', 'ಸೆಪ್ಟೆಂಬರ್', 'ಅಕ್ಟೋಬರ್', 'ನವೆಂಬರ್', 'ಡಿಸೆಂಬರ್'
   ];
   final day = due.day;
   final month = months[due.month - 1];

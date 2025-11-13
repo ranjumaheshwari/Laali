@@ -5,6 +5,9 @@ import 'services/speech_service.dart';
 import 'services/name_extractor.dart';
 import 'services/voice_identity_service.dart';
 import 'services/ai_service.dart';
+import 'services/supabase_service.dart';
+import 'dashboard.dart';
+import 'welcome_page.dart';
 
 enum SignupStep { username, lmp, confirm }
 
@@ -21,29 +24,61 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
   DateTime? lmpDate;
   String transcript = '';
   bool hasSpokenIntro = false;
-
   bool isListening = false;
   bool isSpeaking = false;
+  bool _hasGreeted = false;
+  bool _loading = false;
+  final SupabaseService _supa = SupabaseService();
 
-  // Guard to prevent overlapping listen/speak flows
-  bool _isAwaitingResponse = false;
+  // SAFE NAVIGATION METHODS
+  void _navigateToDashboard() {
+    try {
+      Navigator.pushReplacementNamed(context, '/dashboard');
+    } catch (e) {
+      debugPrint('Named navigation failed: $e');
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const DashboardPage()),
+            (route) => false,
+      );
+    }
+  }
 
-  // Use the shared aiService from lib/services/ai_service.dart
+  void _navigateToWelcome() {
+    try {
+      Navigator.pushReplacementNamed(context, '/welcome');
+    } catch (e) {
+      debugPrint('Navigation to welcome failed: $e');
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const WelcomePage()),
+            (route) => false,
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _initTts();
-    // Auto-start voice flow after UI is ready
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 900), () {
-        _startAutoVoiceSignup();
-      });
-    });
+  }
+
+  Future<bool> _createTempAuthUserIfNeeded() async {
+    try {
+      if (_supa.currentUser == null) {
+        final res = await _supa.signUpTempUser();
+        return res.user != null;
+      }
+      return true;
+    } catch (e) {
+      debugPrint('Temp auth error: $e');
+      return false;
+    }
   }
 
   Future<void> _initTts() async {
     await ttsService.setLanguage('kn-IN');
-    await ttsService.setSlowSpeed(); // SLOWER speed for important signup process
+    await ttsService.setSpeechRate(0.4);
     await ttsService.setPitch(1.0);
 
     ttsService.setStartHandler(() {
@@ -51,26 +86,16 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     });
     ttsService.setCompletionHandler(() {
       if (mounted) setState(() => isSpeaking = false);
-      // small delay to allow audio focus to settle
-      Future.delayed(const Duration(milliseconds: 400), () {
-        // Do not auto-start listening here; flows will explicitly start listening
-      });
     });
     ttsService.setErrorHandler((err) {
       debugPrint('TTS error: $err');
       if (mounted) setState(() => isSpeaking = false);
     });
-
-    // NOTE: initial speak is now handled in _startAutoVoiceSignup to avoid duplicates
   }
 
   Future<void> _speak(String text) async {
     if (text.isEmpty) return;
     try {
-      // stop any existing recognizer to avoid collisions
-      try {
-        await speechService.stop();
-      } catch (_) {}
       await ttsService.speak(text);
     } catch (e) {
       debugPrint('TTS speak error: $e');
@@ -78,125 +103,65 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
   }
 
   Future<void> _toggleListening() async {
-    // For signup we prefer to auto-start listening flow
-    await _startListeningForName();
-  }
-
-  Future<void> _startAutoVoiceSignup() async {
-    if (!hasSpokenIntro) {
-      await _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
-      if (mounted) setState(() => hasSpokenIntro = true);
-    }
-    // Start listening for name input
-    await _startListeningForName();
-  }
-
-  Future<void> _startListeningForName() async {
-    if (isSpeaking || _isAwaitingResponse) return;
-
-    final ok = await speechService.initialize();
-    if (!ok) {
-      await _speak('ಕ್ಷಮಿಸಿ, ಮಾತಿನ ಗುರುತಿಸುವಿಕೆ ಲಭ್ಯವಿಲ್ಲ.');
+    if (isSpeaking) {
+      await _speak('ದಯವಿಟ್ಟು ಕೆಲವು ಕ್ಷಣಗಳಲ್ಲಿ ಪ್ರಯತ್ನಿಸಿ. ನಾನು ಇನ್ನೂ ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ.');
       return;
     }
 
-    // Ensure previous listeners are stopped
-    try {
-      await speechService.stop();
-    } catch (_) {}
-
-    // slight delay to ensure audio focus released after any TTS
-    await Future.delayed(const Duration(milliseconds: 400));
-
-    if (mounted) {
-      setState(() {
-        isListening = true;
-        transcript = '';
-      });
+    if (!_hasGreeted) {
+      setState(() => _hasGreeted = true);
+      await _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
+      return;
     }
 
-    _isAwaitingResponse = true;
-
-    try {
-      await speechService.startListeningWithEnhancedRetry((text, isFinal) async {
-        if (!mounted) return;
-        setState(() => transcript = text);
-
-        // Accept final OR sufficiently long partial as fallback
-        if (isFinal || text.trim().length > 2) {
-          if (mounted) setState(() => isListening = false);
-          _isAwaitingResponse = false;
-          // Handle recognized result
-          _handleRecognitionResult(text);
-
-          // If still expecting username, restart listening after small delay
-          if (step == SignupStep.username) {
-            await Future.delayed(const Duration(milliseconds: 800));
-            if (mounted && !isListening && !isSpeaking) {
-              await _startListeningForName();
-            }
-          }
-        } else if (isFinal) {
-          // final but empty
-          if (mounted) setState(() => isListening = false);
-          _isAwaitingResponse = false;
-        }
-      }, localeId: 'kn-IN', maxRetries: 2, initialTimeout: const Duration(seconds: 10), onFailure: () async {
-        if (!mounted) return;
-        setState(() => isListening = false);
-        _isAwaitingResponse = false;
-        await _speak('ಕ್ಷಮಿಸಿ, ನಾನು ನಿಮ್ಮನ್ನು ಕೇಳಲಾರದಿದ್ದು. ದಯವಿಟ್ಟು ಮೈಕ್ರೊಫೋನ್ ಅನುಮತಿಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.');
-      });
-    } catch (e) {
-      debugPrint('startListeningForName error: $e');
+    if (!isListening) {
+      await _startListeningForName();
+    } else {
+      await speechService.stop();
       if (mounted) setState(() => isListening = false);
-      _isAwaitingResponse = false;
     }
   }
 
-  /// Speak a prompt and listen for a single final reply, then call onFinal.
-  Future<void> _speakThenListen(String prompt, Future<void> Function(String) onFinal) async {
-    if (_isAwaitingResponse) return;
-    _isAwaitingResponse = true;
-    await _speak(prompt);
-    // Wait for audio focus to settle
-    await Future.delayed(const Duration(milliseconds: 600));
+  Future<void> _startListeningForName() async {
+    final ok = await speechService.initialize();
+    if (!ok) {
+      await _speak('ಕ್ಷಮಿಸಿ, ಮೈಕ್ರೊಫೋನ್ ಲಭ್ಯವಿಲ್ಲ.');
+      return;
+    }
 
-    // Ensure previous listeners are stopped
-    try {
-      await speechService.stop();
-    } catch (_) {}
+    if (mounted) {
+      setState(() {
+      isListening = true;
+      transcript = '';
+    });
+    }
 
     try {
-      await speechService.startListeningWithEnhancedRetry((text, isFinal) async {
+      await speechService.startListeningWithRetry((text, isFinal) {
         if (!mounted) return;
         setState(() => transcript = text);
-        if (isFinal || text.trim().length > 2) {
-          _isAwaitingResponse = false;
-          await onFinal(text);
+
+        if (isFinal && text.isNotEmpty) {
+          if (mounted) setState(() => isListening = false);
+          _handleRecognitionResult(text);
+        } else if (isFinal) {
+          if (mounted) setState(() => isListening = false);
         }
-      }, localeId: 'kn-IN', maxRetries: 2, initialTimeout: const Duration(seconds: 10), onFailure: () async {
-        _isAwaitingResponse = false;
-        await _speak('ಕ್ಷಮಿಸಿ, ನನಗೇ ನಿಮ್ಮ ಧ್ವನಿ ಕೇಳಿಸುತಿಲ್ಲ. ದಯವಿಟ್ಟು ಮೈಕ್ರೊಫೋನ್ ಪರಿಶೀಲಿಸಿ.');
-      });
+      },
+          localeId: 'kn-IN',
+          retries: 2,
+          attemptTimeout: const Duration(seconds: 10));
     } catch (e) {
-      debugPrint('speakThenListen error: $e');
-      _isAwaitingResponse = false;
+      if (mounted) setState(() => isListening = false);
     }
   }
 
   void _handleRecognitionResult(String text) async {
     final lower = text.toLowerCase();
-    if (mounted) {
-      setState(() {
-        transcript = text;
-      });
-    }
+    if (mounted) setState(() => transcript = text);
 
     if (step == SignupStep.username) {
-      // Use smart name extraction
       final extractedName = nameExtractor.extractNameFromContext(text, 'username');
-
       debugPrint("📝 Original: '$text'");
       debugPrint("🎯 Extracted: '$extractedName'");
 
@@ -207,16 +172,7 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
             step = SignupStep.confirm;
           });
         }
-
-        // Speak confirmation with extracted name and then listen for yes/no
-        await _speakThenListen('ನೀವು "$extractedName" ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಇದನ್ನು ನಿಮ್ಮ ಹೆಸರಾಗಿ ಉಳಿಸಬೇಕೇ?', (reply) async {
-          final lower = reply.toLowerCase();
-          if (lower.contains('ಹೌದು') || lower.contains('yes') || lower.contains('ಸರಿ')) {
-            await _handleConfirm();
-          } else {
-            await _handleReject();
-          }
-        });
+        await _speak('ನೀವು "$extractedName" ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಇದನ್ನು ನಿಮ್ಮ ಹೆಸರಾಗಿ ಉಳಿಸಬೇಕೇ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
       } else {
         await _speak('ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಸ್ಪಷ್ಟವಾಗಿ ಹೇಳಿ. ಉದಾಹರಣೆ: "ನನ್ನ ಹೆಸರು ರಮ್ಯಾ" ಅಥವಾ "My name is Ramya"');
       }
@@ -233,14 +189,7 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
           });
         }
         final display = _formatDateKn(parsed);
-        await _speakThenListen('ನೀವು $display ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಈ ದಿನಾಂಕವನ್ನು ಉಳಿಸಬೇಕೇ?', (reply) async {
-          final lower = reply.toLowerCase();
-          if (lower.contains('ಹೌದು') || lower.contains('yes') || lower.contains('ಸರಿ')) {
-            await _handleConfirm();
-          } else {
-            await _handleReject();
-          }
-        });
+        await _speak('ನೀವು $display ಎಂದು ಹೇಳಿದ್ದೀರಿ. ನಾನು ಈ ದಿನಾಂಕವನ್ನು ಉಳಿಸಬೇಕೇ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
       } else {
         await _speak('ದಿನಾಂಕವನ್ನು ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ.');
       }
@@ -258,7 +207,6 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       return;
     }
 
-    // Fallback: route general questions during signup to AIService (KB first)
     final fallbackResp = await aiService.getResponse(text, 'signup');
     debugPrint('AI fallback during signup: $fallbackResp');
     await _speak(fallbackResp);
@@ -275,17 +223,34 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       await _speak('ಉತ್ತಮ! ಈಗ ದಯವಿಟ್ಟು ನಿಮ್ಮ ಕೊನೆಯ ಮುಟ್ಟಿನ ದಿನಾಂಕವನ್ನು ಹೇಳಿ.');
       return;
     } else if (step == SignupStep.confirm && lmpDate != null) {
-      // Create voice identity for the new user
-      await voiceIdentityService.createVoiceIdentity(username);
+      setState(() => _loading = true);
+      try {
+        final ok = await _createTempAuthUserIfNeeded();
+        if (!ok) throw Exception('Auth not available. Check Supabase settings.');
 
-      await _speak('ಖಾತೆಯನ್ನು ಯಶಸ್ವಿಯಾಗಿ ರಚಿಸಲಾಗಿದೆ! ನಿಮ್ಮನ್ನು ಡ್ಯಾಶ್‌ಬೋರ್ಡ್‌ಗೆ ಕರೆದೊಯ್ಯುತ್ತಿದ್ದೇನೆ.');
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('userMode', 'account');
-      await prefs.setString('username', username);
-      await prefs.setString('lmpDate', lmpDate!.toIso8601String());
+        final existing = await _supa.getProfile();
+        if (existing == null) {
+          await _supa.createProfile(username: username, isAnonymous: false);
+        }
 
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/dashboard');
+        if (lmpDate != null) {
+          await _supa.createPregnancy(lmpDate: lmpDate!);
+        }
+
+        await voiceIdentityService.createVoiceIdentity(username);
+        await _speak('ಖಾತೆಯನ್ನು ಯಶಸ್ವಿಯಾಗಿ ರಚಿಸಲಾಗಿದೆ! ನಿಮ್ಮನ್ನು ಡ್ಯಾಶ್‌ಬೋರ್ಡ್‌ಗೆ ಕರೆದೊಯ್ಯುತ್ತಿದ್ದೇನೆ.');
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('userMode', 'account');
+        await prefs.setString('username', username);
+        await prefs.setString('lmpDate', lmpDate!.toIso8601String());
+
+        if (mounted) _navigateToDashboard();
+      } catch (e) {
+        debugPrint('Signup error: $e');
+        await _speak('ಕ್ಷಮಿಸಿ, ಖಾತೆ ರಚಿಸುವಾಗ ಸಮಸ್ಯೆ ಉಂಟಾಗಿದೆ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.');
+      } finally {
+        if (mounted) setState(() => _loading = false);
       }
       return;
     }
@@ -312,35 +277,17 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       }
     } else {
       await _speak('ಸರಿ, ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.');
-      if (mounted) {
-        setState(() {
-          transcript = '';
-        });
-      }
+      if (mounted) setState(() => transcript = '');
     }
   }
 
   String _formatDateKn(DateTime d) {
-    final months = [
-      'ಜನವರಿ',
-      'ಫೆಬ್ರವರಿ',
-      'ಮಾರ್ಚ್',
-      'ಎಪ್ರಿಲ್',
-      'ಮೇ',
-      'ಜೂನ',
-      'ಜುಲೈ',
-      'ಆಗಸ್ಟ್',
-      'ಸೆಪ್ಟೆಂಬರ್',
-      'ಅಕ್ಟೋಬರ್',
-      'ನವೆಂಬರ್',
-      'ಡಿಸೆಂಬರ್'
-    ];
+    final months = ['ಜನವರಿ', 'ಫೆಬ್ರವರಿ', 'ಮಾರ್ಚ್', 'ಎಪ್ರಿಲ್', 'ಮೇ', 'ಜೂನ', 'ಜುಲೈ', 'ಆಗಸ್ಟ್', 'ಸೆಪ್ಟೆಂಬರ್', 'ಅಕ್ಟೋಬರ್', 'ನವೆಂಬರ್', 'ಡಿಸೆಂಬರ್'];
     return '${d.day} ${months[d.month - 1]} ${d.year}';
   }
 
   DateTime? parseLMPDate(String input) {
     final s = input.trim();
-
     try {
       return DateTime.parse(s);
     } catch (_) {}
@@ -360,49 +307,16 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     }
 
     final monthNames = {
-      'january': 1,
-      'jan': 1,
-      'february': 2,
-      'feb': 2,
-      'march': 3,
-      'mar': 3,
-      'april': 4,
-      'apr': 4,
-      'may': 5,
-      'june': 6,
-      'jun': 6,
-      'july': 7,
-      'jul': 7,
-      'august': 8,
-      'aug': 8,
-      'september': 9,
-      'sep': 9,
-      'sept': 9,
-      'october': 10,
-      'oct': 10,
-      'november': 11,
-      'nov': 11,
-      'december': 12,
-      'dec': 12,
-      'ಜನವರಿ': 1,
-      'ಫೆಬ್ರವರಿ': 2,
-      'ಮಾರ್ಚ್': 3,
-      'ಏಪ್ರಿಲ್': 4,
-      'ಮೇ': 5,
-      'ಜೂನ್': 6,
-      'ಜುಲೈ': 7,
-      'ಆಗಸ್ಟ್': 8,
-      'ಸೆಪ್ಟೆಂಬರ್': 9,
-      'ಅಕ್ಟೋಬರ್': 10,
-      'ನವೆಂಬರ್': 11,
-      'ಡಿಸೆಂಬರ್': 12
+      'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
+      'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
+      'august': 8, 'aug': 8, 'september': 9, 'sep': 9, 'sept': 9, 'october': 10, 'oct': 10,
+      'november': 11, 'nov': 11, 'december': 12, 'dec': 12,
+      'ಜನವರಿ': 1, 'ಫೆಬ್ರವರಿ': 2, 'ಮಾರ್ಚ್': 3, 'ಏಪ್ರಿಲ್': 4, 'ಮೇ': 5, 'ಜೂನ್': 6,
+      'ಜುಲೈ': 7, 'ಆಗಸ್ಟ್': 8, 'ಸೆಪ್ಟೆಂಬರ್': 9, 'ಅಕ್ಟೋಬರ್': 10, 'ನವೆಂಬರ್': 11, 'ಡಿಸೆಂಬರ್': 12
     };
 
     final tokens = s.replaceAll(RegExp(r'[,.\-]'), ' ').split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-
-    int? day;
-    int? month;
-    int? year;
+    int? day; int? month; int? year;
 
     for (final t in tokens) {
       final n = int.tryParse(t);
@@ -427,192 +341,122 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
         return DateTime(year, month, day);
       } catch (_) {}
     }
-
     return null;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
-    // Use helper _getSubtitle() instead of a local variable
-
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Container(
-          width: double.infinity,
-          height: double.infinity,
+        child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              // Back Button
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.arrow_back, color: Color(0xFF00796B)),
-                  label: const Text('ಹಿಂದೆ', style: TextStyle(color: Color(0xFF00796B))),
-                ),
-              ),
-
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 480),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('ಖಾತೆ ರಚಿಸಿ', style: theme.textTheme.displayMedium),
-                          const SizedBox(height: 8),
-
-                          Text(
-                            _getSubtitle(),
-                            style: theme.textTheme.bodyMedium,
-                          ),
-                          const SizedBox(height: 32),
-
-                          // Signup Card
-                          Card(
-                            elevation: 4,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
+          child: SingleChildScrollView(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 480),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _navigateToWelcome,
+                        icon: const Icon(Icons.arrow_back, color: Color(0xFF00796B)),
+                        label: const Text('ಹಿಂದೆ', style: TextStyle(color: Color(0xFF00796B))),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('ಖಾತೆ ರಚಿಸಿ', style: theme.textTheme.displayMedium),
+                    const SizedBox(height: 8),
+                    Text(_getSubtitle(), style: theme.textTheme.bodyMedium),
+                    const SizedBox(height: 24),
+                    Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          children: <Widget>[
+                            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                              _buildProgressStep(1, 'ಹೆಸರು', username.isNotEmpty),
+                              const SizedBox(width: 8),
+                              _buildProgressStep(2, 'ದಿನಾಂಕ', lmpDate != null),
+                            ]),
+                            const SizedBox(height: 16),
+                            if (username.isNotEmpty) _buildInfoRow('ಹೆಸರು', username),
+                            if (lmpDate != null) _buildInfoRow('ಕೊನೆಯ ಮುಟ್ಟಿನ ದಿನಾಂಕ', _formatDateKn(lmpDate!)),
+                            if (transcript.isNotEmpty)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(16),
+                                margin: const EdgeInsets.symmetric(vertical: 16),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x0D1976D2),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0x331976D2)),
+                                ),
+                                child: Text('"$transcript"', textAlign: TextAlign.center, style: const TextStyle(fontStyle: FontStyle.italic, color: Color(0xFF1976D2))),
+                              ),
+                            const SizedBox(height: 16),
+                            GestureDetector(
+                              onTap: _toggleListening,
+                              child: Container(
+                                width: 80, height: 80,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isListening ? const Color(0xFFD32F2F) : const Color(0xFF1976D2),
+                                  boxShadow: [BoxShadow(color: const Color(0x26000000), blurRadius: 8, offset: const Offset(0, 4))],
+                                ),
+                                child: Icon(isListening ? Icons.mic : Icons.mic_none, color: Colors.white, size: 32),
+                              ),
                             ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
+                            const SizedBox(height: 12),
+                            Text(isListening ? 'ಕೇಳುತ್ತಿದೆ...' : (isSpeaking ? 'ಮಾತನಾಡುತ್ತಿದೆ...' : 'ಮಾತನಾಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ'), style: theme.textTheme.bodyLarge),
+                            const SizedBox(height: 24),
+                            if (step == SignupStep.confirm)
+                              Row(
                                 children: [
-                                  // Progress Indicator
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      _buildProgressStep(1, 'ಹೆಸರು', username.isNotEmpty),
-                                      const SizedBox(width: 8),
-                                      _buildProgressStep(2, 'ದಿನಾಂಕ', lmpDate != null),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 24),
-
-                                  // User Info Display
-                                  if (username.isNotEmpty) _buildInfoRow('ಹೆಸರು', username),
-                                  if (lmpDate != null) _buildInfoRow('ಕೊನೆಯ ಮುಟ್ಟಿನ ದಿನಾಂಕ', _formatDateKn(lmpDate!)),
-
-                                  if (transcript.isNotEmpty)
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(16),
-                                      margin: const EdgeInsets.symmetric(vertical: 16),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0x0D1976D2), // 5% blue
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color: const Color(0x331976D2), // 20% blue
-                                        ),
-                                      ),
-                                      child: Text(
-                                        '"$transcript"',
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          fontStyle: FontStyle.italic,
-                                          color: Color(0xFF1976D2),
-                                        ),
-                                      ),
+                                  Expanded(child: OutlinedButton(onPressed: isSpeaking ? null : _handleReject, child: const Text('ಬದಲಾಯಿಸಿ'))),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: ElevatedButton(
+                                      onPressed: isSpeaking || _loading ? null : _handleConfirm,
+                                      style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                                      child: _loading
+                                          ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                        SizedBox(height: 16, width: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                                        const SizedBox(width: 8), const Text('ರಚಿಸುತ್ತಿದೆ...'),
+                                      ])
+                                          : const Text('ದೃಢೀಕರಿಸಿ'),
                                     ),
-
-                                  const SizedBox(height: 16),
-
-                                  // Microphone Button
-                                  Column(
-                                    children: [
-                                      GestureDetector(
-                                        onTap: _toggleListening,
-                                        child: Container(
-                                          width: 80,
-                                          height: 80,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: isListening
-                                                ? const Color(0xFFD32F2F)
-                                                : const Color(0xFF1976D2),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: const Color(0x26000000), // ~15% black
-                                                blurRadius: 8,
-                                                offset: const Offset(0, 4),
-                                              ),
-                                            ],
-                                          ),
-                                          child: Icon(
-                                            isListening ? Icons.mic : Icons.mic_none,
-                                            color: Colors.white,
-                                            size: 32,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Text(
-                                        isListening ? 'ಕೇಳುತ್ತಿದೆ...' : (isSpeaking ? 'ಮಾತನಾಡುತ್ತಿದೆ...' : 'ಮಾತನಾಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ'),
-                                        style: theme.textTheme.bodyLarge,
-                                      ),
-                                    ],
-                                  ),
-
-                                  const SizedBox(height: 24),
-
-                                  // Action Buttons
-                                  if (step == SignupStep.confirm)
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: OutlinedButton(
-                                            onPressed: _handleReject,
-                                            child: const Text('ಬದಲಾಯಿಸಿ'),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: ElevatedButton.icon(
-                                            onPressed: _handleConfirm,
-                                            icon: const Icon(Icons.check),
-                                            label: const Text('ದೃಢೀಕರಿಸಿ'),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-
-                                  const SizedBox(height: 16),
-
-                                  OutlinedButton(
-                                    onPressed: _skipToDemo,
-                                    child: const Text('ಡೆಮೊ ಡ್ಯಾಶ್‌ಬೋರ್ಡ್'),
                                   ),
                                 ],
                               ),
-                            ),
-                          ),
-                        ],
+                            const SizedBox(height: 16),
+                            OutlinedButton(onPressed: isSpeaking ? null : _skipToDemo, child: const Text('ಡೆಮೊ ಡ್ಯಾಶ್‌ಬೋರ್ಡ')),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  // Add these helper methods:
   String _getSubtitle() {
     switch (step) {
-      case SignupStep.username:
-        return 'ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ';
-      case SignupStep.lmp:
-        return 'ನಿಮ್ಮ ಕೊನೆಯ ಮುಟ್ಟಿನ ದಿನಾಂಕವನ್ನು ಹೇಳಿ';
-      case SignupStep.confirm:
-        return 'ಮಾಹಿತಿಯನ್ನು ದೃಢೀಕರಿಸಿ';
+      case SignupStep.username: return 'ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ';
+      case SignupStep.lmp: return 'ನಿಮ್ಮ ಕೊನೆಯ ಮುಟ್ಟಿನ ದಿನಾಂಕವನ್ನು ಹೇಳಿ';
+      case SignupStep.confirm: return 'ಮಾಹಿತಿಯನ್ನು ದೃಢೀಕರಿಸಿ';
     }
   }
 
@@ -620,30 +464,12 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     return Column(
       children: [
         Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: isCompleted ? const Color(0xFF00796B) : Colors.grey.shade300,
-          ),
-          child: Center(
-            child: Text(
-              stepNumber.toString(),
-              style: TextStyle(
-                color: isCompleted ? Colors.white : Colors.grey.shade600,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
+          width: 32, height: 32,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: isCompleted ? const Color(0xFF00796B) : Colors.grey.shade300),
+          child: Center(child: Text(stepNumber.toString(), style: TextStyle(color: isCompleted ? Colors.white : Colors.grey.shade600, fontWeight: FontWeight.w600))),
         ),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isCompleted ? const Color(0xFF00796B) : Colors.grey.shade600,
-          ),
-        ),
+        Text(label, style: TextStyle(fontSize: 12, color: isCompleted ? const Color(0xFF00796B) : Colors.grey.shade600)),
       ],
     );
   }
@@ -653,32 +479,12 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Colors.black54,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 16,
-              color: Color(0xFF00796B),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
+      decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(12)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 4),
+        Text(value, style: const TextStyle(fontSize: 16, color: Color(0xFF00796B), fontWeight: FontWeight.w600)),
+      ]),
     );
   }
 
@@ -694,8 +500,6 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     await prefs.setString('userMode', 'account');
     await prefs.setString('username', 'ಅತಿಥಿ');
     await prefs.setString('lmpDate', DateTime.now().toIso8601String());
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/dashboard');
-    }
+    if (mounted) _navigateToDashboard();
   }
 }
