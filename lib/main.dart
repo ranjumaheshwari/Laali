@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart'; // REPLACED Supabase
 import 'package:shared_preferences/shared_preferences.dart';
 import 'welcome_page.dart';
 import 'voice_signup_page.dart';
+import '../services/video_search_service.dart';
 import 'voice_interface_page.dart';
 import 'dashboard.dart';
 
@@ -15,6 +16,12 @@ Future<void> main() async {
     debugPrint('✅ Firebase initialized');
   } catch (e) {
     debugPrint('⚠️ Firebase.initialize() failed: $e');
+  }
+  try {
+    await VideoSearchService().initialize();
+    debugPrint('Video search service initialized successfully');
+  } catch (e) {
+    debugPrint('Failed to initialize video search service: $e');
   }
 
   runApp(const MyApp());

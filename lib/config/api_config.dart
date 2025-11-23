@@ -8,6 +8,14 @@ class ApiConfig {
   // API endpoints
   static const String geminiURL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
 
+  // Video Search Configuration
+  static const String videoIndexPath = 'assets/video_index.json';
+  static const double similarityThreshold = 0.68;
+  static const int defaultSearchResults = 5;
+
+  // TODO: Add embedding service URL when available
+  // static const String embeddingServiceUrl = 'https://your-embedding-service.com/embed';
+
   // Rate limiting
   static const int maxRequestsPerMinute = 10;
   static const int requestTimeoutSeconds = 30;
