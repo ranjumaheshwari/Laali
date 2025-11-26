@@ -34,7 +34,7 @@ class _DashboardPageState extends State<DashboardPage> {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const WelcomePage()),
-            (route) => false,
+        (route) => false,
       );
     }
   }
@@ -121,29 +121,11 @@ class _DashboardPageState extends State<DashboardPage> {
         }
       }
 
-      final notesData = await _firebaseService.getRecentVisitNotes(limit: 5);
-      final List<RecentSymptom> loadedSymptoms = [];
-
-      for (final note in notesData) {
-        final transcript = (note['transcript'] ?? '').toString().trim();
-        if (transcript.isNotEmpty) {
-          final snippet = transcript.length > 60
-              ? '${transcript.substring(0, 60)}...'
-              : transcript;
-
-          final timestamp = note['created_at'] as Timestamp;
-          loadedSymptoms.add(RecentSymptom(
-              symptom: snippet,
-              date: _formatRelativeTime(timestamp.toDate()),
-              severity: 'Normal'
-          ));
-        }
-      }
-
+      // Visit notes removed: rely on local data; keep defaults
       if (mounted) {
         setState(() {
-          recentSymptoms = loadedSymptoms;
-          riskLevel = loadedSymptoms.isEmpty ? 'Low' : 'Medium';
+          recentSymptoms = [];
+          riskLevel = 'Low';
         });
       }
     } catch (e) {
@@ -151,8 +133,12 @@ class _DashboardPageState extends State<DashboardPage> {
       if (mounted) {
         setState(() {
           recentSymptoms = [
-            RecentSymptom(symptom: 'ತಲೆನೋವು', date: 'ನಿನ್ನೆ', severity: 'ಕಡಿಮೆ'),
-            RecentSymptom(symptom: 'ರಕ್ತದ ಒತ್ತಡ ಪರಿಶೀಲನೆ', date: '2 ದಿನಗಳ ಹಿಂದೆ', severity: 'ಸಾಮಾನ್ಯ'),
+            RecentSymptom(
+                symptom: 'ತಲೆನೋವು', date: 'ನಿನ್ನೆ', severity: 'ಕಡಿಮೆ'),
+            RecentSymptom(
+                symptom: 'ರಕ್ತದ ಒತ್ತಡ ಪರಿಶೀಲನೆ',
+                date: '2 ದಿನಗಳ ಹಿಂದೆ',
+                severity: 'ಸಾಮಾನ್ಯ'),
           ];
         });
       }
@@ -186,7 +172,6 @@ class _DashboardPageState extends State<DashboardPage> {
     await ttsService.speak(summary);
   }
 
-
   String _translateSeverity(String s) {
     if (s == 'Low') return 'ಕಡಿಮೆ';
     if (s == 'Normal') return 'ಸಾಮಾನ್ಯ';
@@ -210,7 +195,8 @@ class _DashboardPageState extends State<DashboardPage> {
             children: [
               const CircularProgressIndicator(color: Color(0xFF00796B)),
               const SizedBox(height: 16),
-              Text('ಲೋಡ್ ಆಗುತ್ತಿದೆ...', style: Theme.of(context).textTheme.bodyMedium),
+              Text('ಲೋಡ್ ಆಗುತ್ತಿದೆ...',
+                  style: Theme.of(context).textTheme.bodyMedium),
             ],
           ),
         ),
@@ -225,7 +211,8 @@ class _DashboardPageState extends State<DashboardPage> {
           onPressed: _navigateToWelcome,
           tooltip: 'ಹಿಂದೆ',
         ),
-        title: Text('ಡ್ಯಾಶ್‌ಬೋರ್ಡ್', style: Theme.of(context).textTheme.titleLarge),
+        title: Text('ಡ್ಯಾಶ್‌ಬೋರ್ಡ್',
+            style: Theme.of(context).textTheme.titleLarge),
         backgroundColor: Colors.white,
         elevation: 1,
       ),
@@ -240,9 +227,11 @@ class _DashboardPageState extends State<DashboardPage> {
                 // Welcome Section
                 Column(
                   children: [
-                    Text('ಸ್ವಾಗತ, $username', style: Theme.of(context).textTheme.displaySmall),
+                    Text('ಸ್ವಾಗತ, $username',
+                        style: Theme.of(context).textTheme.displaySmall),
                     const SizedBox(height: 8),
-                    Text('ನಿಮ್ಮ ಗರ್ಭಾವಸ್ಥೆಯ ಅವಲೋಕನ ಇಲ್ಲಿದೆ', style: Theme.of(context).textTheme.bodyMedium),
+                    Text('ನಿಮ್ಮ ಗರ್ಭಾವಸ್ಥೆಯ ಅವಲೋಕನ ಇಲ್ಲಿದೆ',
+                        style: Theme.of(context).textTheme.bodyMedium),
                   ],
                 ),
                 const SizedBox(height: 32),
@@ -294,31 +283,77 @@ class _DashboardPageState extends State<DashboardPage> {
                 // Gestational Age Card
                 Card(
                   elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                   child: Padding(
                     padding: const EdgeInsets.all(20),
-                    child: Column(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Icon(Icons.calendar_today, size: 20, color: Theme.of(context).primaryColor),
-                            const SizedBox(width: 8),
-                            Text('ಗರ್ಭಾವಸ್ಥೆಯ ವಯಸ್ಸು', style: Theme.of(context).textTheme.titleLarge),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          formatGestationalAge(ga!),
-                          style: const TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF00796B),
+                        // ⭐ LEFT SIDE — TEXT
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.calendar_today,
+                                      size: 20,
+                                      color: Theme.of(context).primaryColor),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'ಗರ್ಭಾವಸ್ಥೆಯ ವಯಸ್ಸು',
+                                    style:
+                                        Theme.of(context).textTheme.titleLarge,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                formatGestationalAge(ga!),
+                                style: const TextStyle(
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF00796B),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'ತ್ರೈಮಾಸಿಕ ${ga!.trimester}',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'ನಿರೀಕ್ಷಿತ ಹೆರಿಗೆ ದಿನಾಂಕ: ${formatDueDate(ga!.dueDate)}',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Text('ತ್ರೈಮಾಸಿಕ ${ga!.trimester}', style: Theme.of(context).textTheme.bodyMedium),
-                        const SizedBox(height: 20),
-                        Text('ನಿರೀಕ್ಷಿತ ಹೆರಿಗೆ ದಿನಾಂಕ: ${formatDueDate(ga!.dueDate)}', style: Theme.of(context).textTheme.bodyMedium),
+
+                        const SizedBox(width: 12),
+
+                        // ⭐ RIGHT SIDE — CIRCULAR IMAGE
+                        Container(
+                          width: 80,
+                          height: 80,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                blurRadius: 6,
+                                offset: const Offset(0, 3),
+                                color: Colors.black26,
+                              )
+                            ],
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Image.asset(
+                            'assets/images/maternal-hero---1.jpg',
+                            fit: BoxFit.cover,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -326,64 +361,31 @@ class _DashboardPageState extends State<DashboardPage> {
 
                 const SizedBox(height: 16),
 
-                // Recent Activity Card
+                // User Profile Card (visit notes removed)
                 Card(
                   elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                   child: Padding(
                     padding: const EdgeInsets.all(18),
                     child: Column(
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.history, size: 20, color: Theme.of(context).primaryColor),
+                            Icon(Icons.person,
+                                size: 20,
+                                color: Theme.of(context).primaryColor),
                             const SizedBox(width: 8),
-                            Text('ಇತ್ತೀಚಿನ ಚಟುವಟಿಕೆ', style: Theme.of(context).textTheme.titleLarge),
+                            Text('User Profile',
+                                style: Theme.of(context).textTheme.titleLarge),
                           ],
                         ),
                         const SizedBox(height: 12),
-                        if (recentSymptoms.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            child: Text('ಇತ್ತೀಚೆಗೆ ಯಾವುದೇ ಲಕ್ಷಣಗಳನ್ನು ವರದಿ ಮಾಡಲಾಗಿಲ್ಲ', style: Theme.of(context).textTheme.bodyMedium),
-                          )
-                        else
-                          Column(
-                            children: recentSymptoms.map((item) {
-                              final bgColor = item.severity == 'Low'
-                                  ? Colors.green.withAlpha(30)
-                                  : item.severity == 'Normal'
-                                  ? Theme.of(context).primaryColor.withAlpha(30)
-                                  : Colors.orange.withAlpha(30);
-                              final badgeText = _translateSeverity(item.severity);
-                              final dateDisplay = item.date;
-                              return Container(
-                                margin: const EdgeInsets.symmetric(vertical: 6),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(10)),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(item.symptom, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                          const SizedBox(height: 4),
-                                          Text(dateDisplay, style: TextStyle(color: Colors.grey[700], fontSize: 13)),
-                                        ],
-                                      ),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),
-                                      child: Text(badgeText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                    )
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                          ),
+                        ListTile(
+                          leading: const Icon(Icons.person_outline),
+                          title: const Text('Username'),
+                          subtitle: Text(username),
+                        ),
                       ],
                     ),
                   ),
@@ -399,14 +401,15 @@ class _DashboardPageState extends State<DashboardPage> {
                         icon: const Icon(Icons.mic),
                         label: const Padding(
                           padding: EdgeInsets.symmetric(vertical: 14.0),
-                          child: Text('ಲಕ್ಷಣವನ್ನು ವರದಿ ಮಾಡಿ', style: TextStyle(fontSize: 16)),
+                          child: Text('ಲಕ್ಷಣವನ್ನು ವರದಿ ಮಾಡಿ',
+                              style: TextStyle(fontSize: 16)),
                         ),
                         onPressed: _navigateToVoice,
                         style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF00796B),
                             foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
-                        ),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10))),
                       ),
                     ),
                   ],
@@ -416,20 +419,25 @@ class _DashboardPageState extends State<DashboardPage> {
                 // Voice helper card
                 Card(
                   elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                   child: Padding(
                     padding: const EdgeInsets.all(18),
                     child: Column(
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.chat, size: 20, color: Theme.of(context).primaryColor),
+                            Icon(Icons.chat,
+                                size: 20,
+                                color: Theme.of(context).primaryColor),
                             const SizedBox(width: 8),
-                            Text('ಧ್ವನಿ ಸಹಾಯಕ', style: Theme.of(context).textTheme.titleLarge),
+                            Text('ಧ್ವನಿ ಸಹಾಯಕ',
+                                style: Theme.of(context).textTheme.titleLarge),
                           ],
                         ),
                         const SizedBox(height: 12),
-                        Text('ನಿಮ್ಮ ಆರೋಗ್ಯ ಪ್ರಶ್ನೆಗಳಿಗೆ ತಕ್ಷಣ ಉತ್ತರ ಪಡೆಯಿರಿ', style: Theme.of(context).textTheme.bodyMedium),
+                        Text('ನಿಮ್ಮ ಆರೋಗ್ಯ ಪ್ರಶ್ನೆಗಳಿಗೆ ತಕ್ಷಣ ಉತ್ತರ ಪಡೆಯಿರಿ',
+                            style: Theme.of(context).textTheme.bodyMedium),
                         const SizedBox(height: 12),
                         ElevatedButton.icon(
                           icon: const Icon(Icons.mic),
@@ -437,8 +445,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           onPressed: _navigateToVoice,
                           style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF1976D2),
-                              foregroundColor: Colors.white
-                          ),
+                              foregroundColor: Colors.white),
                         ),
                       ],
                     ),
@@ -459,7 +466,8 @@ class RecentSymptom {
   final String date;
   final String severity;
 
-  RecentSymptom({required this.symptom, required this.date, required this.severity});
+  RecentSymptom(
+      {required this.symptom, required this.date, required this.severity});
 }
 
 class GestationalAge {
@@ -485,7 +493,11 @@ GestationalAge calculateGestationalAge(DateTime lmp) {
   final weeks = elapsed ~/ 7;
   final days = elapsed % 7;
   final percentComplete = (elapsed / 280.0) * 100.0;
-  final trimester = (weeks < 13) ? 1 : (weeks < 27) ? 2 : 3;
+  final trimester = (weeks < 13)
+      ? 1
+      : (weeks < 27)
+          ? 2
+          : 3;
   return GestationalAge(
     weeks: weeks,
     days: days,
@@ -501,8 +513,18 @@ String formatGestationalAge(GestationalAge ga) {
 
 String formatDueDate(DateTime due) {
   final months = [
-    'ಜನವರಿ', 'ಫೆಬ್ರವರಿ', 'ಮಾರ್ಚ್', 'ಎಪ್ರಿಲ್', 'ಮೇ', 'ಜೂನ್',
-    'ಜುಲೈ', 'ಆಗಸ್ಟ್', 'ಸೆಪ್ಟೆಂಬರ್', 'ಅಕ್ಟೋಬರ್', 'ನವೆಂಬರ್', 'ಡಿಸೆಂಬರ್'
+    'ಜನವರಿ',
+    'ಫೆಬ್ರವರಿ',
+    'ಮಾರ್ಚ್',
+    'ಎಪ್ರಿಲ್',
+    'ಮೇ',
+    'ಜೂನ್',
+    'ಜುಲೈ',
+    'ಆಗಸ್ಟ್',
+    'ಸೆಪ್ಟೆಂಬರ್',
+    'ಅಕ್ಟೋಬರ್',
+    'ನವೆಂಬರ್',
+    'ಡಿಸೆಂಬರ್'
   ];
   final day = due.day;
   final month = months[due.month - 1];

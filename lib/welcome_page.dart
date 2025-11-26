@@ -20,9 +20,10 @@ class _WelcomePageState extends State<WelcomePage> {
   bool isListening = false;
   bool isSpeaking = false;
   String transcript = '';
-  String? returningUsername;
-  DateTime? returningUserLMP;
-  String _currentFlow = 'initial'; // 'initial', 'confirm_identity', 'verify_lmp'
+  List<UserAccount> existingUsers = [];
+  String? selectedUsername;
+  DateTime? selectedUserLMP;
+  String _currentFlow = 'initial'; // 'initial', 'select_account', 'verify_lmp'
 
   final FirebaseService _firebaseService = FirebaseService();
 
@@ -31,7 +32,7 @@ class _WelcomePageState extends State<WelcomePage> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _prepareServices();
-      _checkReturningUser();
+      _loadExistingUsers();
     });
   }
 
@@ -74,29 +75,50 @@ class _WelcomePageState extends State<WelcomePage> {
     }
   }
 
-  Future<void> _checkReturningUser() async {
+  // Load all existing users from shared preferences
+  Future<void> _loadExistingUsers() async {
     final prefs = await SharedPreferences.getInstance();
-    final userMode = prefs.getString('userMode');
-    final username = prefs.getString('username');
-    final lmpStr = prefs.getString('lmpDate');
 
-    if (userMode == 'account' && username != null) {
-      setState(() {
-        returningUsername = username;
-        if (lmpStr != null) {
-          try {
-            returningUserLMP = DateTime.parse(lmpStr);
-          } catch (e) {
-            debugPrint('Error parsing LMP date: $e');
-          }
-        }
-      });
+    // Get all stored usernames and their data
+    final allUsernames = prefs.getString('allUsernames')?.split(',') ?? [];
 
-      await Future.delayed(const Duration(seconds: 1));
-      await _speak('ನಮಸ್ಕಾರ! ನೀವು $username ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯಲು ಬಯಸುವಿರಾ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
+    final List<UserAccount> users = [];
+
+    for (final username in allUsernames) {
+      if (username.isNotEmpty) {
+        final lmpStr = prefs.getString('${username}_lmpDate');
+        final userMode = prefs.getString('${username}_userMode');
+
+        users.add(UserAccount(
+          username: username,
+          lmpDate: lmpStr != null ? DateTime.tryParse(lmpStr) : null,
+          userMode: userMode,
+        ));
+      }
+    }
+
+    setState(() {
+      existingUsers = users;
+    });
+
+    await Future.delayed(const Duration(seconds: 1));
+
+    if (existingUsers.isNotEmpty) {
+      if (existingUsers.length == 1) {
+        // Single user - ask if they want to continue with that account
+        final user = existingUsers.first;
+        await _speak('ನಮಸ್ಕಾರ! ನೀವು ${user.username} ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯಲು ಬಯಸುವಿರಾ? ಹೌದು, ಇಲ್ಲ, ಅಥವಾ ಹೊಸ ಖಾತೆ ರಚಿಸಿ ಎಂದು ಹೇಳಿ.');
+      } else {
+        // Multiple users - ask which account to use
+        final userNames = existingUsers.map((user) => user.username).join(', ');
+        await _speak('ನಮಸ್ಕಾರ! ನಿಮ್ಮ ಖಾತೆಗಳು: $userNames. ಯಾವ ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯಲು ಬಯಸುವಿರಾ? ಹೆಸರು ಹೇಳಿ, ಅಥವಾ ಹೊಸ ಖಾತೆ ರಚಿಸಿ ಎಂದು ಹೇಳಿ.');
+        setState(() {
+          _currentFlow = 'select_account';
+        });
+      }
     } else {
-      await Future.delayed(const Duration(seconds: 1));
-      await _speak('ನಿಮ್ಮ ಮಾಹಿತಿಯನ್ನು ಶೇಖರಿಸಲು ನೀವು ಬಯಸುವಿರಾ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
+      // New user
+      await _speak('ನಮಸ್ಕಾರ! ಖಾತೆಯನ್ನು ರಚಿಸಲು ಬಯಸುವಿರಾ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
     }
   }
 
@@ -139,22 +161,34 @@ class _WelcomePageState extends State<WelcomePage> {
 
     if (_currentFlow == 'initial') {
       await _handleInitialResponse(lower);
-    } else if (_currentFlow == 'confirm_identity') {
-      await _handleIdentityConfirmation(lower);
+    } else if (_currentFlow == 'select_account') {
+      await _handleAccountSelection(lower);
     } else if (_currentFlow == 'verify_lmp') {
       await _handleLMPVerification(lower);
     }
   }
 
   Future<void> _handleInitialResponse(String response) async {
-    if (returningUsername != null) {
+    if (existingUsers.isNotEmpty) {
       // Returning user flow
       if (response.contains('ಹೌದು') || response.contains('yes')) {
-        await _continueWithAccount();
+        if (existingUsers.length == 1) {
+          // Single user - continue directly
+          await _continueWithAccount(existingUsers.first);
+        } else {
+          // Multiple users - ask which one
+          final userNames = existingUsers.map((user) => user.username).join(', ');
+          await _speak('ಯಾವ ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯಲು ಬಯಸುವಿರಾ? ಹೆಸರು ಹೇಳಿ: $userNames');
+          setState(() {
+            _currentFlow = 'select_account';
+          });
+        }
       } else if (response.contains('ಇಲ್ಲ') || response.contains('no')) {
-        await _handleDifferentUser();
+        await _handleAnonymous();
+      } else if (response.contains('ಹೊಸ') || response.contains('new') || response.contains('ರಚಿಸಿ')) {
+        await _handleStoreInformation();
       } else {
-        await _speak('ಕ್ಷಮಿಸಿ, ನಾನು ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
+        await _speak('ಕ್ಷಮಿಸಿ, ನಾನು ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಹೌದು, ಇಲ್ಲ, ಅಥವಾ ಹೊಸ ಖಾತೆ ರಚಿಸಿ ಎಂದು ಹೇಳಿ.');
         await _startListeningForResponse();
       }
     } else {
@@ -170,35 +204,37 @@ class _WelcomePageState extends State<WelcomePage> {
     }
   }
 
-  Future<void> _handleDifferentUser() async {
-    setState(() {
-      _currentFlow = 'confirm_identity';
-    });
+  Future<void> _handleAccountSelection(String response) async {
+    // Try to find matching username
+    UserAccount? selectedAccount;
 
-    await _speak('ನೀವು $returningUsername ಹೆಸರಿನ ಬೇರೆ ವ್ಯಕ್ತಿಯೇ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
-    await _startListeningForResponse();
-  }
+    for (final user in existingUsers) {
+      if (response.contains(user.username.toLowerCase())) {
+        selectedAccount = user;
+        break;
+      }
+    }
 
-  Future<void> _handleIdentityConfirmation(String response) async {
-    if (response.contains('ಹೌದು') || response.contains('yes')) {
-      // Same name, different person - verify LMP
+    if (selectedAccount != null) {
       setState(() {
+        selectedUsername = selectedAccount!.username;
+        selectedUserLMP = selectedAccount.lmpDate;
         _currentFlow = 'verify_lmp';
       });
 
-      if (returningUserLMP != null) {
-        final formattedDate = _formatDateForSpeech(returningUserLMP!);
-        await _speak('ನಿಮ್ಮ ಕೊನೆಯ ಋತುಚಕ್ರದ ಪ್ರಥಮ ದಿನಾಂಕ ಏನು? ನಿಮ್ಮ ದಿನಾಂಕ $formattedDate ಆಗಿದೆಯೇ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
+      if (selectedUserLMP != null) {
+        final formattedDate = _formatDateForSpeech(selectedUserLMP!);
+        await _speak('ನಿಮ್ಮ ಕೊನೆಯ ಋತುಚಕ್ರದ ಪ್ರಥಮ ದಿನಾಂಕ $formattedDate ಆಗಿದೆಯೇ? ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
       } else {
         await _speak('ನಿಮ್ಮ ಕೊನೆಯ ಋತುಚಕ್ರದ ಪ್ರಥಮ ದಿನಾಂಕ ಏನು? ದಯವಿಟ್ಟು ದಿನಾಂಕ ಹೇಳಿ.');
       }
-      await _startListeningForResponse();
-    } else if (response.contains('ಇಲ್ಲ') || response.contains('no')) {
-      // Different person with same name - create new account
-      await _speak('ಹೊಸ ಖಾತೆ ರಚಿಸಲು ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
-      _navigateToSignup();
+    } else if (response.contains('ಹೊಸ') || response.contains('new') || response.contains('ರಚಿಸಿ')) {
+      await _handleStoreInformation();
+    } else if (response.contains('ಅನಾಮಧೇಯ') || response.contains('anonymous') || response.contains('ಇಲ್ಲ')) {
+      await _handleAnonymous();
     } else {
-      await _speak('ಕ್ಷಮಿಸಿ, ನಾನು ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ.');
+      final userNames = existingUsers.map((user) => user.username).join(', ');
+      await _speak('ಕ್ಷಮಿಸಿ, ನಾನು ಹೆಸರು ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಈ ಹೆಸರುಗಳಲ್ಲಿ ಒಂದನ್ನು ಹೇಳಿ: $userNames, ಅಥವಾ ಹೊಸ ಖಾತೆ ರಚಿಸಿ ಎಂದು ಹೇಳಿ.');
       await _startListeningForResponse();
     }
   }
@@ -206,12 +242,32 @@ class _WelcomePageState extends State<WelcomePage> {
   Future<void> _handleLMPVerification(String response) async {
     if (response.contains('ಹೌದು') || response.contains('yes')) {
       // LMP matches - continue to existing account
-      await _speak('ನಿಮ್ಮ ಗುರುತನ್ನು ಧೃಡಪಡಿಸಲಾಗಿದೆ. ಡ್ಯಾಶ್‌ಬೋರ್ಡ್‌ಗೆ ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
-      _navigateToDashboard();
+      await _continueWithAccount(UserAccount(
+        username: selectedUsername!,
+        lmpDate: selectedUserLMP,
+        userMode: 'account',
+      ));
     } else if (response.contains('ಇಲ್ಲ') || response.contains('no')) {
-      // LMP doesn't match - create new account
-      await _speak('ನಿಮಗಾಗಿ ಹೊಸ ಖಾತೆ ರಚಿಸಲು ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
-      _navigateToSignup();
+      // LMP doesn't match - ask if they want to update or create new
+      await _speak('ದಿನಾಂಕ ಹೊಂದಿಕೆಯಾಗುವುದಿಲ್ಲ. ಹೊಸ ದಿನಾಂಕವನ್ನು ನವೀಕರಿಸಲು ಬಯಸುವಿರಾ ಅಥವಾ ಹೊಸ ಖಾತೆ ರಚಿಸಲು ಬಯಸುವಿರಾ? ನವೀಕರಿಸಿ ಅಥವಾ ಹೊಸ ಖಾತೆ ಎಂದು ಹೇಳಿ.');
+
+      // Listen for update or new account choice
+      final ok = await speechService.initialize();
+      if (ok) {
+        await speechService.startListeningWithRetry((text, isFinal) {
+          if (isFinal && text.isNotEmpty) {
+            final lowerText = text.toLowerCase();
+            if (lowerText.contains('ನವೀಕರಿಸಿ') || lowerText.contains('update')) {
+              _updateLMPForAccount();
+            } else if (lowerText.contains('ಹೊಸ') || lowerText.contains('new')) {
+              _navigateToSignup();
+            } else {
+              _speak('ಕ್ಷಮಿಸಿ, ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಹೊಸ ಖಾತೆ ರಚಿಸಲು ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
+              _navigateToSignup();
+            }
+          }
+        }, localeId: 'kn-IN');
+      }
     } else {
       // Try to extract date from response
       final extractedDate = _extractDateFromText(response);
@@ -224,25 +280,51 @@ class _WelcomePageState extends State<WelcomePage> {
     }
   }
 
+  Future<void> _updateLMPForAccount() async {
+    await _speak('ದಯವಿಟ್ಟು ಹೊಸ ದಿನಾಂಕವನ್ನು ಹೇಳಿ.');
+
+    final ok = await speechService.initialize();
+    if (ok) {
+      await speechService.startListeningWithRetry((text, isFinal) {
+        if (isFinal && text.isNotEmpty) {
+          final parsedDate = _extractDateFromText(text);
+          if (parsedDate != null) {
+            _saveUpdatedLMP(parsedDate);
+          } else {
+            _speak('ದಿನಾಂಕ ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಹೊಸ ಖಾತೆ ರಚಿಸಲು ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
+            _navigateToSignup();
+          }
+        }
+      }, localeId: 'kn-IN');
+    }
+  }
+
+  Future<void> _saveUpdatedLMP(DateTime newLMP) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('${selectedUsername}_lmpDate', newLMP.toIso8601String());
+
+    // Update current session
+    await prefs.setString('userMode', 'account');
+    await prefs.setString('username', selectedUsername!);
+    await prefs.setString('lmpDate', newLMP.toIso8601String());
+
+    await _speak('ದಿನಾಂಕ ನವೀಕರಿಸಲಾಗಿದೆ. ಡ್ಯಾಶ್‌ಬೋರ್ಡ್‌ಗೆ ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
+    _navigateToDashboard();
+  }
+
   DateTime? _extractDateFromText(String text) {
-    // Simple date extraction logic - you might want to enhance this
     try {
-      // Look for common date patterns
       final now = DateTime.now();
 
-      // If user says "today" or equivalent
       if (text.contains('ಇಂದು') || text.contains('today')) {
         return now;
       }
 
-      // If user says "yesterday" or equivalent
       if (text.contains('ನಿನ್ನೆ') || text.contains('yesterday')) {
         return now.subtract(const Duration(days: 1));
       }
 
-      // Add more date parsing logic as needed
-      // This is a simplified version - you might want to use a proper date parsing library
-
+      // Add more sophisticated date parsing as needed
       return null;
     } catch (e) {
       debugPrint('Date extraction error: $e');
@@ -251,9 +333,8 @@ class _WelcomePageState extends State<WelcomePage> {
   }
 
   Future<void> _verifyExtractedDate(DateTime extractedDate) async {
-    if (returningUserLMP != null) {
-      // Check if dates are close enough (within 2 days)
-      final difference = extractedDate.difference(returningUserLMP!).inDays.abs();
+    if (selectedUserLMP != null) {
+      final difference = extractedDate.difference(selectedUserLMP!).inDays.abs();
       if (difference <= 2) {
         await _speak('ದಿನಾಂಕ ಹೊಂದಿಕೆಯಾಗಿದೆ. ಡ್ಯಾಶ್‌ಬೋರ್ಡ್‌ಗೆ ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
         _navigateToDashboard();
@@ -262,7 +343,6 @@ class _WelcomePageState extends State<WelcomePage> {
         _navigateToSignup();
       }
     } else {
-      // No existing LMP to compare with
       await _speak('ಹೊಸ ಖಾತೆ ರಚಿಸಲು ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
       _navigateToSignup();
     }
@@ -276,9 +356,22 @@ class _WelcomePageState extends State<WelcomePage> {
     return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 
-  Future<void> _continueWithAccount() async {
-    await _speak('ನಿಮ್ಮ ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
-    _navigateToDashboard();
+  Future<void> _continueWithAccount(UserAccount user) async {
+    // Save selected user as current session
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('userMode', user.userMode ?? 'account');
+    await prefs.setString('username', user.username);
+    if (user.lmpDate != null) {
+      await prefs.setString('lmpDate', user.lmpDate!.toIso8601String());
+    }
+
+    await _speak('ನಿಮ್ಮ ${user.username} ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯುತ್ತಿದ್ದೇನೆ.');
+
+    if (user.userMode == 'account') {
+      _navigateToDashboard();
+    } else {
+      _navigateToVoice();
+    }
   }
 
   Future<void> _handleStoreInformation() async {
@@ -304,14 +397,26 @@ class _WelcomePageState extends State<WelcomePage> {
         await prefs.setString('username', 'ಅತಿಥಿ');
         await prefs.setString('lmpDate', DateTime.now().toIso8601String());
 
+        // Add to existing users list
+        await _addUserToExistingList('ಅತಿಥಿ');
+
         await _speak('ಅನಾಮಧೇಯವಾಗಿ ಮುಂದುವರಿಯುತ್ತಿದ್ದೇನೆ.');
         _navigateToVoice();
       }
     } catch (e) {
       debugPrint('Anonymous error: $e');
       await _speak('ಕ್ಷಮಿಸಿ, ಪ್ರವೇಶದಲ್ಲಿ ಸಮಸ್ಯೆ ಉಂಟಾಗಿದೆ.');
-    } finally {
-      if (mounted) {}
+    }
+  }
+
+  // Helper method to add user to existing users list
+  Future<void> _addUserToExistingList(String username) async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentUsers = prefs.getString('allUsernames')?.split(',') ?? [];
+
+    if (!currentUsers.contains(username)) {
+      currentUsers.add(username);
+      await prefs.setString('allUsernames', currentUsers.join(','));
     }
   }
 
@@ -345,20 +450,39 @@ class _WelcomePageState extends State<WelcomePage> {
   }
 
   String _getQuestionText() {
-    if (_currentFlow == 'confirm_identity') {
-      return 'ನೀವು $returningUsername ಹೆಸರಿನ ಬೇರೆ ವ್ಯಕ್ತಿಯೇ?';
+    if (_currentFlow == 'select_account') {
+      return 'ಯಾವ ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯಲು ಬಯಸುವಿರಾ?';
     } else if (_currentFlow == 'verify_lmp') {
-      if (returningUserLMP != null) {
-        final formattedDate = _formatDateForSpeech(returningUserLMP!);
+      if (selectedUserLMP != null) {
+        final formattedDate = _formatDateForSpeech(selectedUserLMP!);
         return 'ನಿಮ್ಮ ಕೊನೆಯ ಋತುಚಕ್ರದ ಪ್ರಥಮ ದಿನಾಂಕ $formattedDate ಆಗಿದೆಯೇ?';
       } else {
         return 'ನಿಮ್ಮ ಕೊನೆಯ ಋತುಚಕ್ರದ ಪ್ರಥಮ ದಿನಾಂಕ ಏನು?';
       }
     } else {
-      if (returningUsername != null) {
-        return 'ನಮಸ್ಕಾರ $returningUsername! ನಿಮ್ಮ ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯಲು ಬಯಸುವಿರಾ?';
+      if (existingUsers.isNotEmpty) {
+        if (existingUsers.length == 1) {
+          return 'ನಮಸ್ಕಾರ ${existingUsers.first.username}! ನಿಮ್ಮ ಖಾತೆಯೊಂದಿಗೆ ಮುಂದುವರೆಯಲು ಬಯಸುವಿರಾ?';
+        } else {
+          return 'ನಿಮ್ಮ ಖಾತೆಗಳು: ${existingUsers.map((user) => user.username).join(', ')}';
+        }
       } else {
         return 'ನಿಮ್ಮ ಮಾಹಿತಿಯನ್ನು ಶೇಖರಿಸಲು ನೀವು ಬಯಸುವಿರಾ?';
+      }
+    }
+  }
+
+  String _getSubtitleText() {
+    if (_currentFlow == 'select_account') {
+      final userNames = existingUsers.map((user) => user.username).join(', ');
+      return 'ಹೆಸರು ಹೇಳಿ: $userNames, ಅಥವಾ "ಹೊಸ ಖಾತೆ"';
+    } else if (_currentFlow == 'verify_lmp') {
+      return 'ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ';
+    } else {
+      if (existingUsers.isNotEmpty) {
+        return 'ಹೌದು, ಇಲ್ಲ, ಅಥವಾ ಹೊಸ ಖಾತೆ ರಚಿಸಿ ಎಂದು ಹೇಳಿ';
+      } else {
+        return 'ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ';
       }
     }
   }
@@ -422,6 +546,16 @@ class _WelcomePageState extends State<WelcomePage> {
                             textAlign: TextAlign.center,
                           ),
 
+                          const SizedBox(height: 8),
+
+                          Text(
+                            _getSubtitleText(),
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.grey[700],
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+
                           const SizedBox(height: 16),
 
                           if (transcript.isNotEmpty)
@@ -475,7 +609,7 @@ class _WelcomePageState extends State<WelcomePage> {
                                 ? 'ಕೇಳುತ್ತಿದೆ... ಮಾತನಾಡಿ'
                                 : (isSpeaking
                                 ? 'ಮಾತನಾಡುತ್ತಿದೆ...'
-                                : 'ಹೌದು ಅಥವಾ ಇಲ್ಲ ಎಂದು ಹೇಳಿ'),
+                                : 'ಮಾತನಾಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ'),
                             style: theme.textTheme.bodyLarge,
                             textAlign: TextAlign.center,
                           ),
@@ -491,4 +625,16 @@ class _WelcomePageState extends State<WelcomePage> {
       ),
     );
   }
+}
+
+class UserAccount {
+  final String username;
+  final DateTime? lmpDate;
+  final String? userMode;
+
+  UserAccount({
+    required this.username,
+    this.lmpDate,
+    this.userMode,
+  });
 }

@@ -8,37 +8,31 @@ class AudioStorageService {
   factory AudioStorageService() => _instance;
   AudioStorageService._internal();
 
-  Future<String?> saveAudioLocally(Uint8List audioBytes, String messageId) async {
+  // ADD USER-SPECIFIC PATHS
+  Future<String> _getUserAudioDirectory(String? userId) async {
+    final directory = await getApplicationDocumentsDirectory();
+    final userFolder = userId ?? 'anonymous';
+    return '${directory.path}/audio_responses/$userFolder';
+  }
+
+  Future<String?> saveAudioLocally(Uint8List audioBytes, String messageId, {String? userId}) async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final audioDir = Directory('${directory.path}/audio_responses');
+      final audioDirPath = await _getUserAudioDirectory(userId);
+      final audioDir = Directory(audioDirPath);
 
       if (!await audioDir.exists()) {
         await audioDir.create(recursive: true);
       }
 
-      final filePath = '${audioDir.path}/$messageId.mp3';
+      final filePath = '$audioDirPath/$messageId.mp3';
       final file = File(filePath);
 
       await file.writeAsBytes(audioBytes);
-      debugPrint('✅ Audio saved locally: $filePath');
+      debugPrint('✅ Audio saved locally for user $userId: $filePath');
 
       return filePath;
     } catch (e) {
       debugPrint('❌ Error saving audio locally: $e');
-      return null;
-    }
-  }
-
-  Future<File?> getLocalAudioFile(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (await file.exists()) {
-        return file;
-      }
-      return null;
-    } catch (e) {
-      debugPrint('❌ Error getting local audio file: $e');
       return null;
     }
   }
@@ -56,18 +50,6 @@ class AudioStorageService {
     }
   }
 
-  Future<void> deleteLocalAudioFile(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (await file.exists()) {
-        await file.delete();
-        debugPrint('✅ Audio file deleted: $filePath');
-      }
-    } catch (e) {
-      debugPrint('❌ Error deleting audio file: $e');
-    }
-  }
-
   Future<bool> audioFileExists(String filePath) async {
     try {
       final file = File(filePath);
@@ -78,10 +60,10 @@ class AudioStorageService {
     }
   }
 
-  Future<void> cleanupOldAudioFiles({int keepLastDays = 30}) async {
+  Future<void> cleanupOldAudioFiles({String? userId, int keepLastDays = 30}) async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final audioDir = Directory('${directory.path}/audio_responses');
+      final audioDirPath = await _getUserAudioDirectory(userId);
+      final audioDir = Directory(audioDirPath);
 
       if (await audioDir.exists()) {
         final files = await audioDir.list().toList();
@@ -92,7 +74,7 @@ class AudioStorageService {
             final stat = await file.stat();
             if (stat.modified.isBefore(cutoffDate)) {
               await file.delete();
-              debugPrint('🧹 Cleaned up old audio file: ${file.path}');
+              debugPrint('🧹 Cleaned up old audio file for user $userId: ${file.path}');
             }
           }
         }
@@ -102,27 +84,18 @@ class AudioStorageService {
     }
   }
 
-  Future<int> getAudioCacheSize() async {
+  // Clean up ALL user audio files (when user account is deleted)
+  Future<void> cleanupUserAudioFiles(String userId) async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final audioDir = Directory('${directory.path}/audio_responses');
+      final audioDirPath = await _getUserAudioDirectory(userId);
+      final audioDir = Directory(audioDirPath);
 
       if (await audioDir.exists()) {
-        final files = await audioDir.list().toList();
-        int totalSize = 0;
-
-        for (final file in files) {
-          if (file is File) {
-            final stat = await file.stat();
-            totalSize += stat.size;
-          }
-        }
-        return totalSize;
+        await audioDir.delete(recursive: true);
+        debugPrint('✅ Deleted all audio files for user: $userId');
       }
-      return 0;
     } catch (e) {
-      debugPrint('❌ Error calculating audio cache size: $e');
-      return 0;
+      debugPrint('❌ Error cleaning up user audio files: $e');
     }
   }
 }

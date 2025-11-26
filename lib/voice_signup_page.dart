@@ -34,10 +34,12 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     super.initState();
     _initTts();
 
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await Future.delayed(const Duration(seconds: 1));
-      await _speak('ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
+      await _speak('ನಿಮ್ಮ ಮಾಹಿತಿಯನ್ನು ಸಂಗ್ರಹಿಸಿ ನಿಮಗೆ ಸಂಬಂಧಿತ ಉತ್ತರಗಳನ್ನು ನೀಡಲಾಗುವುದು. ನಾನು ನಿಮಗೆ ಖಾತೆಯನ್ನು ರಚಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಹೆಸರನ್ನು ಹೇಳಿ.');
     });
+
   }
 
   // AUTOMATIC GREETING
