@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:loading_indicator/loading_indicator.dart';
 import 'package:provider/provider.dart';
 import '../config/routes.dart';
 import '../models/userModel.dart';
@@ -16,7 +17,10 @@ class WelcomePage extends StatefulWidget {
   State<WelcomePage> createState() => _WelcomePageState();
 }
 
-class _WelcomePageState extends State<WelcomePage> {
+class _WelcomePageState extends State<WelcomePage> with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _opacityAnimation;
   bool isListening = false;
   bool isSpeaking = false;
   String transcript = '';
@@ -27,11 +31,25 @@ class _WelcomePageState extends State<WelcomePage> {
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1200),
+      );
+
+      _scaleAnimation = Tween<double>(begin: 1.0, end: 1.4).animate(
+        CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+      );
+
+      _opacityAnimation = Tween<double>(begin: 0.6, end: 0.0).animate(
+        CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+      );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _prepareServices();
       _startGreeting();
     });
   }
+
+  
 
 
   Future<void> _startGreeting() async {
@@ -66,6 +84,8 @@ class _WelcomePageState extends State<WelcomePage> {
       transcript = '';
     });
 
+    _pulseController.repeat();
+
     try {
       await speechService.startListeningWithRetry(
         (text, isFinal) {
@@ -75,9 +95,13 @@ class _WelcomePageState extends State<WelcomePage> {
 
           if (isFinal && text.isNotEmpty) {
             setState(() => isListening = false);
+            _pulseController.stop();
+            _pulseController.reset();
             _handleUserResponse(text);
           } else if (isFinal) {
             setState(() => isListening = false);
+            _pulseController.stop();
+            _pulseController.reset();
           }
         },
         localeId: 'kn-IN',
@@ -86,6 +110,8 @@ class _WelcomePageState extends State<WelcomePage> {
       );
     } catch (_) {
       if (mounted) setState(() => isListening = false);
+      _pulseController.stop();
+            _pulseController.reset();
     }
   }
 
@@ -155,11 +181,14 @@ class _WelcomePageState extends State<WelcomePage> {
 
     try {
       setState(() => isSpeaking = true);
+      _pulseController.repeat();
       await ttsService.speak(text);
     } catch (e) {
       debugPrint('TTS error: $e');
     } finally {
       if (mounted) setState(() => isSpeaking = false);
+      _pulseController.stop();
+      _pulseController.reset();
     }
   }
 
@@ -179,6 +208,7 @@ class _WelcomePageState extends State<WelcomePage> {
     speechService.cancel();
     ttsService.stop();
     super.dispose();
+    _pulseController.dispose();
   }
 
 
@@ -241,62 +271,92 @@ class _WelcomePageState extends State<WelcomePage> {
                     ),
 
                   Container(
-                    padding: const EdgeInsets.all(30),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surface,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: theme.shadowColor.withOpacity(0.1),
-                          blurRadius: 25,
-                          offset: const Offset(0, 15),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-
-                        GestureDetector(
-                          onTap: _toggleListening,
-                          child: Container(
-                            width: 170,
-                            height: 170,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isListening
-                                  ? theme.colorScheme.error
-                                  : theme.colorScheme.primary,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: (isListening
-                                          ? theme.colorScheme.error
-                                          : theme.colorScheme.primary)
-                                      .withOpacity(0.3),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 8),
+                    // padding: const EdgeInsets.all(30),
+                    // decoration: BoxDecoration(
+                    //   color: theme.colorScheme.surface,
+                    //   borderRadius: BorderRadius.circular(24),
+                    //   boxShadow: [
+                    //     BoxShadow(
+                    //       color: theme.shadowColor.withOpacity(0.1),
+                    //       blurRadius: 25,
+                    //     ),
+                    //   ],
+                    // ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20.0),
+                      child: Column(
+                        children: [
+                      
+                        Stack(
+                            alignment: Alignment.center,
+                            children: [
+                      
+                              /// 🔵 ANIMATED RING
+                              if (isListening || isSpeaking)
+                                FadeTransition(
+                                  opacity: _opacityAnimation,
+                                  child: ScaleTransition(
+                                    scale: _scaleAnimation,
+                                    child: Container(
+                                      width: 150,
+                                      height: 150,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: (isListening
+                                                ? Theme.of(context).colorScheme.primary
+                                                : Colors.pink)
+                                            .withOpacity(0.4),
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ],
-                            ),
-                            child: Icon(
-                              isListening ? Icons.mic : Icons.mic_none,
-                              color: Colors.white,
-                              size: 80,
-                            ),
+                      
+                              /// 🎤 MAIN MIC BUTTON
+                              GestureDetector(
+                                onTap: _toggleListening,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  width: 100,
+                                  height: 100,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isListening
+                                        ? Theme.of(context).colorScheme.error
+                                        : Theme.of(context).colorScheme.primary,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: (isListening
+                                                ? Theme.of(context).colorScheme.error
+                                                : Theme.of(context).colorScheme.primary)
+                                            .withOpacity(0.4),
+                                        blurRadius: 25,
+                                        spreadRadius: 5,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Icon(
+                                    isListening ? Icons.mic : Icons.mic_none,
+                                    color: Colors.white,
+                                    size: 50,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        Text(
-                          isListening
-                              ? 'ಕೇಳುತ್ತಿದೆ... ಮಾತನಾಡಿ'
-                              : (isSpeaking
-                                  ? 'ಮಾತನಾಡುತ್ತಿದೆ...'
-                                  : 'ಮಾತನಾಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ'),
-                          style: theme.textTheme.bodyLarge,
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
+                      
+                          const SizedBox(height: 30),
+                      
+                          Text(
+                            isListening
+                                ? 'ಕೇಳುತ್ತಿದೆ... ಮಾತನಾಡಿ'
+                                : (isSpeaking
+                                    ? 'ಮಾತನಾಡುತ್ತಿದೆ...'
+                                    : 'ಮಾತನಾಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ'),
+                            style: theme.textTheme.bodyLarge,
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],

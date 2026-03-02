@@ -15,7 +15,11 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _opacityAnimation;
   String username = 'User';
   DateTime lmpDate = DateTime.now();
   GestationalAge? ga;
@@ -27,19 +31,6 @@ class _DashboardPageState extends State<DashboardPage> {
   String riskLevel = 'Low';
   List<RecentSymptom> recentSymptoms = [];
 
-  // SAFE NAVIGATION METHODS
-  void _navigateToWelcome() {
-    try {
-      Navigator.pushReplacementNamed(context, '/welcome');
-    } catch (e) {
-      debugPrint('Navigation to welcome failed: $e');
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const WelcomePage()),
-            (route) => false,
-      );
-    }
-  }
 
   void _navigateToVoice() {
     try {
@@ -56,6 +47,20 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.4).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+    );
+
+    _opacityAnimation = Tween<double>(begin: 0.6, end: 0.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+    );
+
     _initTts();
     _loadPrefsAndCalculate();
   }
@@ -66,14 +71,21 @@ class _DashboardPageState extends State<DashboardPage> {
     await ttsService.setPitch(1.0);
 
     ttsService.setStartHandler(() {
-      if (mounted) setState(() => isSpeaking = true);
-    });
+    if (mounted) {
+      setState(() => isSpeaking = true);
+      _pulseController.repeat();
+    }
+  });
     ttsService.setCompletionHandler(() {
       if (mounted) setState(() => isSpeaking = false);
+      _pulseController.stop();
+    _pulseController.reset();
     });
     ttsService.setErrorHandler((err) {
       debugPrint('TTS error: $err');
       if (mounted) setState(() => isSpeaking = false);
+      _pulseController.stop();
+    _pulseController.reset();
     });
   }
 
@@ -247,29 +259,53 @@ class _DashboardPageState extends State<DashboardPage> {
                   margin: const EdgeInsets.symmetric(vertical: 20),
                   child: Column(
                     children: [
-                      GestureDetector(
-                        onTap: _speakSummary,
-                        child: Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF00796B),
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Color.fromRGBO(0, 121, 107, 0.3),
-                                blurRadius: 15,
-                                offset: const Offset(0, 6),
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            isSpeaking ? Icons.volume_up : Icons.volume_up,
-                            color: Colors.white,
-                            size: 50,
-                          ),
-                        ),
-                      ),
+                      Stack(
+  alignment: Alignment.center,
+  children: [
+
+    /// 🔊 ANIMATED PULSE WHEN SPEAKING
+    if (isSpeaking)
+      FadeTransition(
+        opacity: _opacityAnimation,
+        child: ScaleTransition(
+          scale: _scaleAnimation,
+          child: Container(
+            width: 140,
+            height: 140,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF00796B).withOpacity(0.3),
+            ),
+          ),
+        ),
+      ),
+
+    /// MAIN BUTTON
+    GestureDetector(
+      onTap: _speakSummary,
+      child: Container(
+        width: 100,
+        height: 100,
+        decoration: BoxDecoration(
+          color: const Color(0xFF00796B),
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: const Color.fromRGBO(0, 121, 107, 0.3),
+              blurRadius: 15,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: const Icon(
+          Icons.volume_up,
+          color: Colors.white,
+          size: 50,
+        ),
+      ),
+    ),
+  ],
+),
                       const SizedBox(height: 16),
                       Text(
                         'ಡ್ಯಾಶ್ಬೋರ್ಡ್ ಸಾರಾಂಶವನ್ನು ಕೇಳಲು ಟ್ಯಾಪ್ ಮಾಡಿ',

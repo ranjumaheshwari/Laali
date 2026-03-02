@@ -22,7 +22,11 @@ class VoiceInterfacePage extends StatefulWidget {
   State<VoiceInterfacePage> createState() => _VoiceInterfacePageState();
 }
 
-class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
+class _VoiceInterfacePageState extends State<VoiceInterfacePage>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _opacityAnimation;
   final ScrollController _scrollController = ScrollController();
   List<ChatMessage> messages = [];
   bool isRecording = false;
@@ -60,6 +64,18 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.4).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+    );
+
+    _opacityAnimation = Tween<double>(begin: 0.6, end: 0.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+    );
     _initTts();
     _loadUserData();
     _addWelcomeMessage();
@@ -277,6 +293,7 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
       _recordingDuration = Duration.zero;
       _currentTranscript = null;
       _finalTranscript = null;
+      _pulseController.repeat();
     });
 
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -309,6 +326,8 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
   void _stopRecording() {
     _recordingTimer.cancel();
     speechService.stop();
+    _pulseController.stop();
+  _pulseController.reset();
     if (mounted) {
       setState(() {
         isRecording = false;
@@ -1265,15 +1284,16 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
 
   // Play message audio with pause/resume support
 
-  @override
-  void dispose() {
-    _recordingTimer.cancel();
-    ttsService.stop();
-    speechService.stop();
-    audioService.stop();
-    _scrollController.dispose();
-    super.dispose();
-  }
+ @override
+void dispose() {
+  _pulseController.dispose();
+  _recordingTimer.cancel();
+  ttsService.stop();
+  speechService.stop();
+  audioService.stop();
+  _scrollController.dispose();
+  super.dispose();
+}
 
   @override
   Widget build(BuildContext context) {
@@ -1602,29 +1622,52 @@ class _VoiceInterfacePageState extends State<VoiceInterfacePage> {
       child: Column(
         children: [
           // Large Mic Button
-          GestureDetector(
-            onTap: _startRecording,
-            child: Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: greenColor, // UPDATED: New green color
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: greenColor // UPDATED: New green color
-                        .withAlpha(76),
-                    blurRadius: 10,
-                    offset: const Offset(0, 5),
+          Stack(
+            alignment: Alignment.center,
+            children: [
+
+              /// 🔵 Animated Pulse Ring (only when recording)
+              if (isRecording)
+                FadeTransition(
+                  opacity: _opacityAnimation,
+                  child: ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: greenColor.withOpacity(0.3),
+                      ),
+                    ),
                   ),
-                ],
+                ),
+
+              /// 🎤 Main Mic Button
+              GestureDetector(
+                onTap: _startRecording,
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: greenColor,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: greenColor.withAlpha(76),
+                        blurRadius: 10,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.mic,
+                    size: 40,
+                    color: Colors.white,
+                  ),
+                ),
               ),
-              child: const Icon(
-                Icons.mic,
-                size: 40,
-                color: Colors.white,
-              ),
-            ),
+            ],
           ),
           const SizedBox(height: 8),
           const Text(
