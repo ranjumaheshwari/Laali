@@ -23,7 +23,10 @@ class VoiceSignupPage extends StatefulWidget {
   State<VoiceSignupPage> createState() => _VoiceSignupPageState();
 }
 
-class _VoiceSignupPageState extends State<VoiceSignupPage> {
+class _VoiceSignupPageState extends State<VoiceSignupPage> with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _opacityAnimation;
   SignupStep step = SignupStep.username;
   String username = '';
   DateTime? lmpDate;
@@ -37,6 +40,18 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
   @override
   void initState() {
     super.initState();
+     _pulseController = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1200),
+      );
+
+      _scaleAnimation = Tween<double>(begin: 1.0, end: 1.4).animate(
+        CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+      );
+
+      _opacityAnimation = Tween<double>(begin: 0.6, end: 0.0).animate(
+        CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+      );
     _initTts();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -77,14 +92,23 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
     await ttsService.setPitch(1.0);
 
     ttsService.setStartHandler(() {
-      if (mounted) setState(() => isSpeaking = true);
+      if (mounted) {
+        setState(() => isSpeaking = true);
+        _pulseController.repeat();
+      }
     });
     ttsService.setCompletionHandler(() {
-      if (mounted) setState(() => isSpeaking = false);
+      if (mounted) {
+        setState(() => isSpeaking = false);
+        _pulseController.stop();
+        _pulseController.reset();
+      }
     });
     ttsService.setErrorHandler((err) {
       debugPrint('TTS error: $err');
       if (mounted) setState(() => isSpeaking = false);
+       _pulseController.stop();
+        _pulseController.reset();
     });
   }
 
@@ -107,7 +131,11 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       await _startListening();
     } else {
       await speechService.stop();
-      if (mounted) setState(() => isListening = false);
+        if (mounted) {
+          setState(() => isListening = false);
+          _pulseController.stop();
+          _pulseController.reset();
+        }
     }
   }
 
@@ -123,6 +151,7 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
         isListening = true;
         transcript = '';
       });
+       _pulseController.repeat();
     }
 
     try {
@@ -130,11 +159,19 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
         if (!mounted) return;
         setState(() => transcript = text);
 
-        if (isFinal && text.isNotEmpty) {
-          if (mounted) setState(() => isListening = false);
+       if (isFinal && text.isNotEmpty) {
+          if (mounted) {
+            setState(() => isListening = false);
+            _pulseController.stop();
+            _pulseController.reset();
+          }
           _handleRecognitionResult(text);
         } else if (isFinal) {
-          if (mounted) setState(() => isListening = false);
+          if (mounted) {
+            setState(() => isListening = false);
+            _pulseController.stop();
+            _pulseController.reset();
+          }
         }
       }, localeId: 'kn-IN', retries: 2, attemptTimeout: const Duration(seconds: 10));
     } catch (e) {
@@ -322,8 +359,19 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
       }
     }
 
+    
+    
     if (day != null && month != null) {
-      year ??= DateTime.now().year;
+      if (year == null) {
+        final now = DateTime.now();
+        year = now.year;
+
+        // If month is ahead of current month → last year
+        if (month > now.month) {
+          year = now.year - 1;
+        }
+      }
+
       try {
         return DateTime(year, month, day);
       } catch (_) {}
@@ -437,48 +485,81 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
                             // BIG MICROPHONE BUTTON WITH BOX
                             Container(
                               padding: const EdgeInsets.all(30),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[50],
-                                borderRadius: BorderRadius.circular(24),
-                                border: Border.all(
-                                  color: Colors.grey[300]!,
-                                  width: 2,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.1),
-                                    blurRadius: 20,
-                                    offset: const Offset(0, 10),
-                                  ),
-                                ],
-                              ),
+                              // decoration: BoxDecoration(
+                              //   color: Colors.grey[50],
+                              //   borderRadius: BorderRadius.circular(24),
+                              //   border: Border.all(
+                              //     color: Colors.grey[300]!,
+                              //     width: 2,
+                              //   ),
+                              //   boxShadow: [
+                              //     BoxShadow(
+                              //       color: Colors.black.withValues(alpha: 0.1),
+                              //       blurRadius: 20,
+                              //       offset: const Offset(0, 10),
+                              //     ),
+                              //   ],
+                              // ),
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  GestureDetector(
-                                    onTap: _toggleListening,
-                                    child: Container(
-                                      width: 120, // Bigger mic
-                                      height: 120, // Bigger mic
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: isListening ? const Color(0xFFD32F2F) : const Color(0xFF00796B),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: (isListening ? const Color(0xFFD32F2F) : const Color(0xFF00796B)).withOpacity(0.3),
-                                            blurRadius: 20,
-                                            offset: const Offset(0, 8),
+                                  Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                              
+                                      /// 🔵 ANIMATED RING
+                                      if (isListening || isSpeaking)
+                                        FadeTransition(
+                                          opacity: _opacityAnimation,
+                                          child: ScaleTransition(
+                                            scale: _scaleAnimation,
+                                            child: Container(
+                                              width: 150,
+                                              height: 150,
+                                              decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: (isListening
+                                                        ? Theme.of(context).colorScheme.primary
+                                                        : Colors.pink)
+                                                    .withOpacity(0.4),
+                                              ),
+                                            ),
                                           ),
-                                        ],
+                                        ),
+                              
+                                      /// 🎤 MAIN MIC BUTTON
+                                      GestureDetector(
+                                        onTap: _toggleListening,
+                                        child: AnimatedContainer(
+                                          duration: const Duration(milliseconds: 200),
+                                          width: 100,
+                                          height: 100,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: isListening
+                                                ? Theme.of(context).colorScheme.error
+                                                : Theme.of(context).colorScheme.primary,
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: (isListening
+                                                        ? Theme.of(context).colorScheme.error
+                                                        : Theme.of(context).colorScheme.primary)
+                                                    .withOpacity(0.4),
+                                                blurRadius: 25,
+                                                spreadRadius: 5,
+                                              ),
+                                            ],
+                                          ),
+                                          child: Icon(
+                                            isListening ? Icons.mic : Icons.mic_none,
+                                            color: Colors.white,
+                                            size: 50,
+                                          ),
+                                        ),
                                       ),
-                                      child: Icon(
-                                        isListening ? Icons.mic : Icons.mic_none,
-                                        color: Colors.white,
-                                        size: 50, // Bigger icon
-                                      ),
-                                    ),
+                                    ],
                                   ),
-                                  const SizedBox(height: 16),
+                                  const SizedBox(height: 30),
 
                                   // STATUS TEXT
                                   Text(
@@ -634,6 +715,7 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> {
   @override
   void dispose() {
     ttsService.stop();
+    _pulseController.dispose();
     speechService.cancel();
     super.dispose();
   }
