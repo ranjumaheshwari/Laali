@@ -5,7 +5,7 @@ import 'package:mcp/config/theme_data.dart';
 import 'package:mcp/provider/theme_provider.dart';
 import 'package:mcp/provider/user_provider.dart';
 import 'package:provider/provider.dart'; 
-import '../services/video_search_service.dart';
+import '../../services/video_search_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
