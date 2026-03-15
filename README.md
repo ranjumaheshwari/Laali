@@ -1,203 +1,210 @@
-# 🩺 Maternal Care Project (MCP)
+# 🩺 Laali — Maternal Care Project (MCP)
 
-A voice-first maternal health assistant application built in Kannada language to help pregnant women access reliable health information and track their pregnancy journey safely and privately.
+A voice-first maternal health assistant application built in Kannada (and English) to help pregnant women access reliable health information, track pregnancy progress, and keep their data private.
 
 ---
 
-## 🌟 Features
+## 🌟 Key Features
 
-- 🗣️ Voice-first interaction (Kannada + English support)
-- 🤖 AI-powered maternal health assistance
-- 📅 Pregnancy tracking using LMP date
+- 🗣️ Voice-first interaction (Kannada + English)
+- 🤖 AI-powered maternal health guidance
+- 📅 Pregnancy tracking via LMP date
 - 👤 Automatic user recognition
-- 🔒 Anonymous mode for privacy
+- 🔒 Anonymous/Private mode
 - 💬 Conversation history storage
-- 🗄️ PostgreSQL database integration
+- 🗄️ PostgreSQL backend for persistence
 - 🌐 REST API backend (Node.js + Express)
 
 ---
 
-# 🏗️ Project Structure
+## 🧭 Repository Layout (Current)
 
-maternal-care-project/
-│
-├── Backend/
-│   ├── Connection/        # Database configuration
-│   ├── Controllers/       # Business logic
-│   ├── Routes/            # API routes
-│   ├── .env               # Environment variables (DO NOT COMMIT)
+```
+/ (repo root)
+├── backend/                    # Node.js + Express API
+│   ├── connections/            # DB connection logic
+│   ├── controller/             # Request handlers / business logic
+│   ├── routes/                 # API route definitions
 │   ├── package.json
-│   └── server.js
-│
-├── android/
-├── assets/
-├── lib/
-├── web/
-├── windows/
-├── pubspec.yaml
-└── README.md
+│   ├── server.js
+│   └── ...
+├── frontend/                   # Flutter app
+│   ├── lib/                    # Dart source code
+│   ├── android/                # Android build
+│   ├── ios/ (if present)       # iOS build (may be generated)
+│   ├── web/                    # Web build assets
+│   ├── windows/                # Windows build
+│   ├── pubspec.yaml
+│   └── ...
+└── README.md                   # This file
+```
+
+> 🔎 Note: The Flutter app lives under `frontend/` and the Node.js backend lives under `backend/`.
 
 ---
 
-# 📱 Frontend Setup (Flutter)
+## 🚀 Getting Started (All-in-One)
 
-## Prerequisites
+### 1) Clone repository
 
-- Flutter SDK (latest version)
-- Dart SDK
-- Android Studio / VS Code
-- Android SDK
-- Xcode (for iOS – macOS only)
-
-## Installation
-
-1. Clone the repository:
-
+```bash
 git clone https://github.com/your-username/maternal-care-project.git
-
-2. Navigate to project:
-
 cd maternal-care-project
-
-3. Install dependencies:
-
-flutter pub get
-
-4. Run the app:
-
-flutter run
+```
 
 ---
 
-# 🖥️ Backend Setup (Node.js + Express + PostgreSQL)
+## 🧩 Backend (Node.js + Express + PostgreSQL)
 
-## Prerequisites
+### ✅ Prerequisites
 
 - Node.js (v18+ recommended)
-- PostgreSQL installed and running
-- npm
+- PostgreSQL running locally (or remote)
+- npm (bundled with Node.js)
 
----
+### 1) Install dependencies
 
-## 1️⃣ Install Backend Dependencies
+```bash
+cd backend
+npm install
+```
 
-cd Backend  
-npm install  
+### 2) Configure environment
 
-If required:
+Create a file at `backend/.env` (do not commit this file).
 
-npm install express cors dotenv pg bcrypt jsonwebtoken  
+Example `backend/.env`:
 
----
-
-## 2️⃣ Create `.env` File
-
-Inside the `Backend/` folder create a file named:
-
-.env
-
-### Example `.env` Configuration
-
+```env
 PORT=5000
 
-DB_HOST=localhost  
-DB_PORT=5432  
-DB_USER=postgres  
-DB_PASSWORD=your_password  
-DB_NAME=maternal_care_db  
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_NAME=maternal_care_db
 
-JWT_SECRET=super_secret_key  
-AI_API_KEY=your_ai_api_key  
+JWT_SECRET=super_secret_key
+AI_API_KEY=your_ai_api_key
+```
 
-⚠️ Important: Add this to `.gitignore`
+> ⚠️ Make sure `backend/.env` is ignored by Git. If the repo does not already include it, add it to `.gitignore`.
 
-Backend/node_modules  
-Backend/.env  
+### 3) Database setup
 
----
+Run these SQL commands in your PostgreSQL instance (adjust to your schema):
 
-## 3️⃣ Database Setup
-
-Create PostgreSQL database:
-
+```sql
 CREATE DATABASE maternal_care_db;
 
-Example tables:
-
 CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100),
-    phone VARCHAR(15),
-    lmp_date DATE,
-    anonymous BOOLEAN DEFAULT false,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100),
+  phone VARCHAR(15),
+  lmp_date DATE,
+  anonymous BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE messages (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id),
-    message TEXT,
-    response TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  message TEXT,
+  response TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+```
 
----
+### 4) Run the backend server
 
-## 4️⃣ Start Backend Server
+```bash
+cd backend
+npm start
+```
 
-cd Backend  
-node server.js  
+By default the API will run at:
 
-or  
-
-npm start  
-
-Server runs at:
-
+```
 http://localhost:5000
+```
 
 ---
 
-# 🔗 Connecting Flutter to Backend
+## 📱 Frontend (Flutter)
 
-For Android Emulator:
+### ✅ Prerequisites
 
+- Flutter SDK (latest stable)
+- Dart SDK (bundled with Flutter)
+- Android Studio or VS Code
+- Android SDK
+- Xcode (macOS, for iOS builds)
+
+### 1) Install dependencies
+
+```bash
+cd frontend
+flutter pub get
+```
+
+### 2) Configure API base URL
+
+In the Flutter code, update the backend base URL if needed (typically in `lib/config/api_config.dart` or similar).
+
+For Android emulator:
+
+```dart
 const String baseUrl = "http://10.0.2.2:5000/api";
+```
 
-For Physical Device:
+For a physical device (or connecting to a remote backend):
 
+```dart
 const String baseUrl = "http://YOUR_LOCAL_IP:5000/api";
+```
+
+### 3) Run the app
+
+```bash
+cd frontend
+flutter run
+```
 
 ---
 
-# 🔐 Security Notes
+## 🔐 Security Notes
 
-- Never commit `.env` file
-- Use strong JWT secret
-- Hash passwords using bcrypt
-- Validate API inputs
-- Use HTTPS in production
-
----
-
-# 🚀 Future Improvements
-
-- Trimester-based AI suggestions
-- Push notifications
-- Offline voice mode
-- Real-time chat (WebSocket)
-- Cloud deployment (Render / AWS / Railway)
+- Never commit `.env` or secret keys (API keys, JWT secrets).
+- Use strong secrets and rotate them regularly.
+- Validate/escape all input at the API boundary.
+- Use HTTPS in production.
 
 ---
 
-# 🤝 Contributing
+## 🧪 Testing
 
-Contributions are welcome!
+- Backend tests (if present) can be run under `backend/`.
+- Frontend widget/unit tests live under `frontend/test/`.
+
+---
+
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create a new branch
+2. Create a feature branch
 3. Commit your changes
-4. Submit a Pull Request
+4. Open a pull request
+
+---
+
+## 📦 Future Improvements
+
+- Trimester-based AI recommendations
+- Push notifications
+- Offline voice mode
+- Real-time chat (WebSockets)
+- Cloud deployment (Render / AWS / Railway)
+
 
 ---
 
