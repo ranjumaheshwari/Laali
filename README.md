@@ -1,66 +1,206 @@
-# Maternal Care Project (MCP)
+# 🩺 Maternal Care Project (MCP)
 
-A voice-first maternal health assistant application in Kannada language, designed to help pregnant women access health information and track their pregnancy journey.
+A voice-first maternal health assistant application built in Kannada language to help pregnant women access reliable health information and track their pregnancy journey safely and privately.
 
-## Features
+---
 
-- 🗣️ Voice-first interaction in Kannada language
-- 🎯 Automatic user recognition
-- 📱 Anonymous mode for privacy
-- 📅 Pregnancy tracking with LMP date
-- 🤖 AI-powered health information
-- 🔄 Mixed language support (Kannada/English)
+## 🌟 Features
 
-## Getting Started
+- 🗣️ Voice-first interaction (Kannada + English support)
+- 🤖 AI-powered maternal health assistance
+- 📅 Pregnancy tracking using LMP date
+- 👤 Automatic user recognition
+- 🔒 Anonymous mode for privacy
+- 💬 Conversation history storage
+- 🗄️ PostgreSQL database integration
+- 🌐 REST API backend (Node.js + Express)
 
-### Prerequisites
+---
+
+# 🏗️ Project Structure
+
+maternal-care-project/
+│
+├── Backend/
+│   ├── Connection/        # Database configuration
+│   ├── Controllers/       # Business logic
+│   ├── Routes/            # API routes
+│   ├── .env               # Environment variables (DO NOT COMMIT)
+│   ├── package.json
+│   └── server.js
+│
+├── android/
+├── assets/
+├── lib/
+├── web/
+├── windows/
+├── pubspec.yaml
+└── README.md
+
+---
+
+# 📱 Frontend Setup (Flutter)
+
+## Prerequisites
 
 - Flutter SDK (latest version)
 - Dart SDK
 - Android Studio / VS Code
-- Android SDK (for Android build)
-- Xcode (for iOS build, macOS only)
+- Android SDK
+- Xcode (for iOS – macOS only)
 
-### Installation
+## Installation
 
 1. Clone the repository:
-```bash
-git clone https://github.com/[your-username]/maternal-care-project.git
-```
 
-2. Install dependencies:
-```bash
+git clone https://github.com/your-username/maternal-care-project.git
+
+2. Navigate to project:
+
+cd maternal-care-project
+
+3. Install dependencies:
+
 flutter pub get
-```
 
-3. Run the app:
-```bash
+4. Run the app:
+
 flutter run
-```
 
-## Project Structure
+---
 
-```
-lib/
-├── data/               # Data models and static content
-├── services/           # Service classes for voice, AI, etc.
-├── utils/             # Utility functions and helpers
-├── widgets/           # Reusable widget components
-└── main.dart         # Application entry point
-```
+# 🖥️ Backend Setup (Node.js + Express + PostgreSQL)
 
-## Voice Features
+## Prerequisites
 
-- Speech recognition in Kannada
-- Text-to-speech output in Kannada
-- Mixed language support
-- Voice identity management
-- Automatic user recognition
+- Node.js (v18+ recommended)
+- PostgreSQL installed and running
+- npm
 
-## Contributing
+---
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## 1️⃣ Install Backend Dependencies
 
-## License
+cd Backend  
+npm install  
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+If required:
+
+npm install express cors dotenv pg bcrypt jsonwebtoken  
+
+---
+
+## 2️⃣ Create `.env` File
+
+Inside the `Backend/` folder create a file named:
+
+.env
+
+### Example `.env` Configuration
+
+PORT=5000
+
+DB_HOST=localhost  
+DB_PORT=5432  
+DB_USER=postgres  
+DB_PASSWORD=your_password  
+DB_NAME=maternal_care_db  
+
+JWT_SECRET=super_secret_key  
+AI_API_KEY=your_ai_api_key  
+
+⚠️ Important: Add this to `.gitignore`
+
+Backend/node_modules  
+Backend/.env  
+
+---
+
+## 3️⃣ Database Setup
+
+Create PostgreSQL database:
+
+CREATE DATABASE maternal_care_db;
+
+Example tables:
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100),
+    phone VARCHAR(15),
+    lmp_date DATE,
+    anonymous BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE messages (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    message TEXT,
+    response TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+---
+
+## 4️⃣ Start Backend Server
+
+cd Backend  
+node server.js  
+
+or  
+
+npm start  
+
+Server runs at:
+
+http://localhost:5000
+
+---
+
+# 🔗 Connecting Flutter to Backend
+
+For Android Emulator:
+
+const String baseUrl = "http://10.0.2.2:5000/api";
+
+For Physical Device:
+
+const String baseUrl = "http://YOUR_LOCAL_IP:5000/api";
+
+---
+
+# 🔐 Security Notes
+
+- Never commit `.env` file
+- Use strong JWT secret
+- Hash passwords using bcrypt
+- Validate API inputs
+- Use HTTPS in production
+
+---
+
+# 🚀 Future Improvements
+
+- Trimester-based AI suggestions
+- Push notifications
+- Offline voice mode
+- Real-time chat (WebSocket)
+- Cloud deployment (Render / AWS / Railway)
+
+---
+
+# 🤝 Contributing
+
+Contributions are welcome!
+
+1. Fork the repository
+2. Create a new branch
+3. Commit your changes
+4. Submit a Pull Request
+
+---
+
+# 📄 License
+
+This project is licensed under the MIT License.
