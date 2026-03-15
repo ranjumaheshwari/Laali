@@ -48,7 +48,7 @@ A voice-first maternal health assistant application built in Kannada (and Englis
 ### 1) Clone repository
 
 ```bash
-git clone https://github.com/your-username/maternal-care-project.git
+git clone https://github.com/DT-khpt/Laali.git
 cd maternal-care-project
 ```
 
