@@ -1,16 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart';
 import 'package:mcp/config/routes.dart';
 import 'package:mcp/models/userModel.dart';
 import 'package:mcp/provider/user_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../services/tts_service.dart';
 import '../services/speech_service.dart';
 import '../services/name_extractor.dart';
 import '../services/voice_identity_service.dart';
 import '../services/ai_service.dart';
-import '../services/firebase_service.dart';
 import 'dashboard.dart';
 import 'welcome_page.dart';
 
@@ -34,8 +31,6 @@ class _VoiceSignupPageState extends State<VoiceSignupPage> with SingleTickerProv
   bool isListening = false;
   bool isSpeaking = false;
   bool _loading = false;
-
-  final FirebaseService _firebaseService = FirebaseService();
 
   @override
   void initState() {

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:mcp/config/routes.dart';
 import 'package:mcp/config/theme_data.dart';
 import 'package:mcp/provider/theme_provider.dart';
@@ -9,13 +8,6 @@ import '../../services/video_search_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  try {
-    await Firebase.initializeApp();
-    debugPrint('✅ Firebase initialized');
-  } catch (e) {
-    debugPrint('⚠️ Firebase.initialize() failed: $e');
-  }
 
   try {
     await VideoSearchService().initialize();
