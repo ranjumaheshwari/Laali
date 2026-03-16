@@ -56,35 +56,15 @@ class TtsService {
 
   Future<void> setLanguage(String language) async {
     try {
-      final available = await _tts.getLanguages;
-      final requested = language;
-      if (available != null) {
-        final asStrings = available.map((e) => e.toString()).toList();
-        if (asStrings.contains(requested)) {
-          await _tts.setLanguage(requested);
-          return;
-        }
-        final alt = requested.replaceAll('-', '_');
-        if (asStrings.contains(alt)) {
-          await _tts.setLanguage(alt);
-          return;
-        }
-        final prefix = requested.split(RegExp(r'[-_]')).first;
-        final firstMatch = asStrings.firstWhere((s) => s.startsWith(prefix), orElse: () => '');
-        if (firstMatch.isNotEmpty) {
-          await _tts.setLanguage(firstMatch);
-          return;
-        }
-        if (asStrings.isNotEmpty) {
-          await _tts.setLanguage(asStrings.first);
-          return;
-        }
-      }
-      await _tts.setLanguage('en-US');
+      // Try to set the requested language directly
+      await _tts.setLanguage(language);
+      debugPrint('TTS language set to: $language');
     } catch (e) {
       debugPrint('Error setting TTS language ($language): $e');
       try {
+        // Fallback to English
         await _tts.setLanguage('en-US');
+        debugPrint('TTS fallback to en-US');
       } catch (e2) {
         debugPrint('Fallback setLanguage failed: $e2');
       }

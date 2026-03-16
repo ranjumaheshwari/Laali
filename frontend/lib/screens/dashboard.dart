@@ -3,9 +3,7 @@ import 'package:mcp/config/routes.dart';
 import 'package:mcp/provider/user_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/tts_service.dart';
-import '../services/firebase_service.dart';
 import 'welcome_page.dart';
 import 'voice_interface_page.dart';
 
@@ -27,7 +25,6 @@ class _DashboardPageState extends State<DashboardPage>
   bool loading = true;
   bool isSpeaking = false;
 
-  final FirebaseService _firebaseService = FirebaseService();
 
   String riskLevel = 'Low';
   List<RecentSymptom> recentSymptoms = [];
@@ -100,78 +97,10 @@ class _DashboardPageState extends State<DashboardPage>
       ga = calculateGestationalAge(lmpDate);
     }
 
-    await _loadFirebaseData();
-
     if (mounted) setState(() => loading = false);
   }
 
-  Future<void> _loadFirebaseData() async {
-    try {
-      final profile = await _firebaseService.getUserProfile();
-      if (profile != null) {
-        final dbUsername = profile['username'];
-        if (dbUsername != null && dbUsername.isNotEmpty && mounted) {
-          setState(() => username = dbUsername);
-        }
-
-        final lmpTimestamp = profile['lmp_date'] as Timestamp?;
-        if (lmpTimestamp != null && mounted) {
-          setState(() {
-            lmpDate = lmpTimestamp.toDate();
-            ga = calculateGestationalAge(lmpDate);
-          });
-        }
-      }
-
-      // Set recent activities
-      if (mounted) {
-        setState(() {
-          recentSymptoms = [
-            RecentSymptom(
-              symptom: 'ಗರ್ಭಾವಸ್ಥೆಯ ವಯಸ್ಸು ಪರಿಶೀಲಿಸಲಾಗಿದೆ',
-              date: 'ಇಂದು',
-              severity: 'ಸಾಮಾನ್ಯ',
-            ),
-            RecentSymptom(
-              symptom: 'ತಲೆನೋವು ವರದಿ ಮಾಡಲಾಗಿದೆ',
-              date: 'ನಿನ್ನೆ',
-              severity: 'ಕಡಿಮೆ',
-            ),
-            RecentSymptom(
-              symptom: 'ರಕ್ತದ ಒತ್ತಡ ಪರಿಶೀಲನೆ',
-              date: '2 ದಿನಗಳ ಹಿಂದೆ',
-              severity: 'ಸಾಮಾನ್ಯ',
-            ),
-            RecentSymptom(
-              symptom: 'ಆಹಾರ ಸಲಹೆ ಕೇಳಲಾಗಿದೆ',
-              date: '3 ದಿನಗಳ ಹಿಂದೆ',
-              severity: 'ಕಡಿಮೆ',
-            ),
-          ];
-          riskLevel = 'ಕಡಿಮೆ';
-        });
-      }
-    } catch (e) {
-      debugPrint('Firebase data loading error: $e');
-      if (mounted) {
-        setState(() {
-          recentSymptoms = [
-            RecentSymptom(
-              symptom: 'ಗರ್ಭಾವಸ್ಥೆಯ ವಯಸ್ಸು ಪರಿಶೀಲಿಸಲಾಗಿದೆ',
-              date: 'ಇಂದು',
-              severity: 'ಸಾಮಾನ್ಯ',
-            ),
-            RecentSymptom(
-              symptom: 'ತಲೆನೋವು ವರದಿ ಮಾಡಲಾಗಿದೆ',
-              date: 'ನಿನ್ನೆ',
-              severity: 'ಕಡಿಮೆ',
-            ),
-          ];
-        });
-      }
-    }
-  }
-
+  
   Future<void> _speakSummary() async {
     if (ga == null || isSpeaking) return;
 
