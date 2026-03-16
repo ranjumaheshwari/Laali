@@ -4,9 +4,22 @@ require('dotenv').config();
 const createDatabaseIfNotExists = require('./Connection/db');
 
 const userRoutes = require('./Routes/userRoutes');
+const audioRoutes = require('./Routes/audioRoutes');
 
 const app = express();
 app.use(express.json());
+
+// Add CORS middleware for cross-origin requests
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
 
 async function startServer() {
   await createDatabaseIfNotExists();
@@ -47,6 +60,7 @@ async function startServer() {
   app.locals.pool = pool;
 
   app.use('/api', userRoutes);
+  app.use('/api/audio', audioRoutes);
 
   app.get('/', (req, res) => {
     res.send("Hello World");
