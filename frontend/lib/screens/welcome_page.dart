@@ -8,7 +8,6 @@ import '../provider/user_provider.dart';
 import '../services/tts_service.dart';
 import '../services/speech_service.dart';
 import '../services/voice_identity_service.dart';
-import '../services/firebase_service.dart';
 
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
@@ -25,8 +24,6 @@ class _WelcomePageState extends State<WelcomePage> with SingleTickerProviderStat
   bool isSpeaking = false;
   String transcript = '';
   bool _hasGreeted = false;
-
-  final FirebaseService _firebaseService = FirebaseService();
 
   @override
   void initState() {
